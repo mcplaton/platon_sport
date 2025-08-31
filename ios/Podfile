@@ -1,6 +1,6 @@
-ENV['COCOAPODS_DISABLE_STATS'] = 'true'
-
+# ios/Podfile
 platform :ios, '15.0'
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
 project 'Runner', {
   'Debug' => :debug,
@@ -8,26 +8,34 @@ project 'Runner', {
   'Release' => :release,
 }
 
-# مسار Flutter tools
-flutter_root = File.expand_path('../..', __FILE__)
-load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
+# يقرأ FLUTTER_ROOT من الملف الذي ينشئه فلاتر داخل ios/Flutter
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(File.join('Flutter', 'Generated.xcconfig'), __dir__)
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "Generated.xcconfig must exist. Run a Flutter build first (e.g. `flutter build ios`)."
+  end
+
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    match = line.match(/FLUTTER_ROOT\=(.*)/)
+    return match[1].strip if match
+  end
+  raise "FLUTTER_ROOT not found in Generated.xcconfig"
+end
+
+require File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
+
+flutter_ios_podfile_setup
 
 target 'Runner' do
-  use_frameworks! :linkage => :static
-  use_modular_headers!
-
+  # لا نستخدم use_frameworks! إلا إذا احتجته فعلاً. هذا الإعداد الافتراضي آمن للفirebase وباقي الحِزم.
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 
 post_install do |installer|
   installer.pods_project.targets.each do |t|
     t.build_configurations.each do |config|
-      # نرفع الحد الأدنى لكل البودات
+      # تثبيت حد أدنى iOS 15 للحِزم مثل cloud_firestore
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      # إيقاف Bitcode (ملغى أساساً لكن احتياطيًا)
-      config.build_settings['ENABLE_BITCODE'] = 'NO'
-      # ضمان سويفت 5 (اختياري)
-      config.build_settings['SWIFT_VERSION'] = '5.0'
     end
   end
 end

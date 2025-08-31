@@ -2,36 +2,35 @@ workflows:
   ios_unsigned:
     name: iOS Unsigned (PlaToN Sport)
     max_build_duration: 60
+    instance_type: mac_mini_m1
 
     environment:
-      flutter: stable          # يستخدم آخر قناة Flutter مستقرة
-      xcode: latest            # آخر إصدار Xcode متاح عند Codemagic
+      flutter: stable         # يستخدم أحدث قناة مستقرة من Flutter
+      xcode: 15.4             # إصدار Xcode
       cocoapods: default
       vars:
-        CM_CLONE_DEPTH: 1
+        LC_ALL: en_US.UTF-8
+        LANG: en_US.UTF-8
+        COCOAPODS_DISABLE_STATS: "true"
 
     cache:
       cache_paths:
         - ~/.pub-cache
         - ios/Pods
-        - ~/Library/Caches/CocoaPods
 
     scripts:
-      # 1) جلب الحزم
-      - name: Flutter pub get
+      - name: Show versions
         script: |
           flutter --version
+          pod --version
+          xcodebuild -version
+
+      - name: Flutter clean & pub get
+        script: |
+          flutter clean
           flutter pub get
 
-      # 2) التأكد من وجود مجلد iOS (احتياطيًا)
-      - name: Ensure iOS directory exists
-        script: |
-          if [ ! -d "ios" ]; then
-            flutter create .
-          fi
-
-      # 3) تثبيت CocoaPods وفق Podfile (المطلوب iOS 15)
-      - name: Pod install
+      - name: Reset CocoaPods
         script: |
           cd ios
           rm -rf Pods Podfile.lock
@@ -39,19 +38,22 @@ workflows:
           pod install
           cd ..
 
-      # 4) بناء IPA غير موقّعة
       - name: Build iOS unsigned IPA
         script: |
-          FLUTTER_BUILD_NUMBER=${CM_BUILD_ID:-1}
+          # يبني IPA بدون توقيع (مناسب للجيلبريك/التوقيع اليدوي)
+          BUILD_NUMBER=${CM_BUILD_ID:-1}
           flutter build ipa --release --no-codesign \
-            --build-name=1.0.0 --build-number=$FLUTTER_BUILD_NUMBER
+            --build-name=1.0.0 --build-number=$BUILD_NUMBER
 
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
-      - build/ios/**/*.dSYM.zip
+      - ios/Podfile.lock
 
     publishing:
       email:
         recipients:
-          - ahmedjackson47@gmail.com
+          - ${CM_EMAIL}
+        notify:
+          success: true
+          failure: true

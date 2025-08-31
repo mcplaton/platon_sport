@@ -1,23 +1,42 @@
 workflows:
-  ios_adhoc:
-    name: iOS AdHoc (PlaToN Sport)
+  ios_unsigned:
+    name: iOS Unsigned (PlaToN Sport)
     max_build_duration: 60
     environment:
       flutter: stable
       xcode: latest
       cocoapods: default
+      vars:
+        APP_PACKAGE_NAME: com.example.platon_sport
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
     scripts:
       - name: Flutter pub get
         script: flutter pub get
-      - name: Build IPA (release)
-        script: flutter build ipa --release
+
+      # (اختياري) لو فولدر ios مفقود لسبب ما
+      - name: Ensure iOS directory exists
+        script: |
+          if [ ! -d "ios" ]; then
+            flutter create .
+          fi
+
+      # بناء IPA غير موقّع
+      - name: Build iOS unsigned IPA
+        script: |
+          flutter build ipa --release --no-codesign
+
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
+
     publishing:
       email:
         recipients:
-          - you@example.com
-        notify:
-          success: true
-          failure: true
+          # ضع ايميلك هنا لو حاب توصلك نتيجة البناء
+          # - you@example.com

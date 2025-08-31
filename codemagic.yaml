@@ -1,45 +1,61 @@
 workflows:
   ios_unsigned:
     name: iOS Unsigned (PlaToN Sport)
+    instance_type: mac_mini_m2
     max_build_duration: 60
+
     environment:
       flutter: stable
       xcode: latest
       cocoapods: default
+      vars:
+        IOS_APP_ID: com.example.platonSport  # عدّلها إذا لزم
+
     cache:
       cache_paths:
         - ~/.pub-cache
-        - ios/Pods
         - ~/Library/Caches/CocoaPods
+        - ios/Pods
+
     scripts:
       - name: Flutter clean & pub get
         script: |
           flutter --version
           flutter clean
+          rm -rf ios/Pods ios/Podfile.lock ios/Flutter/App.framework ios/Flutter/Flutter.framework
           flutter pub get
+
+      - name: Ensure iOS directory exists
+        script: |
+          if [ ! -d "ios" ]; then
+            flutter create .
+          fi
 
       - name: Reset CocoaPods (fresh pods after Podfile change)
         script: |
           cd ios
-          rm -rf Pods Podfile.lock
           pod repo update
-          pod install
+          pod deintegrate
+          pod install --repo-update
           cd ..
 
       - name: Build iOS unsigned IPA (no codesign)
         script: |
-          # تأكد أن ios/Runner/GoogleService-Info.plist موجود إن كنت تستخدم Firebase
-          flutter build ipa --release --no-codesign
+          # يبني التطبيق بدون توقيع ويضمن تضمين Flutter engine
+          flutter build ios --release --no-codesign
+
+          # إنشاء Payload وتجهيز الـ IPA
+          mkdir -p build/ios/ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ios/ipa/Payload/Runner.app
+          cd build/ios/ipa
+          zip -qry ../Runner-unsigned.ipa Payload
+          cd -
 
     artifacts:
-      - build/ios/ipa/*.ipa
+      - build/ios/ipa/Runner-unsigned.ipa
       - build/ios/archive/*.xcarchive
 
-    # اختياري: شغّل فقط عند الدفع على الفرع main
-    triggering:
-      events:
-        - push
-      branch_patterns:
-        - pattern: main
-          include: true
-          source: true
+    publishing:
+      email:
+        recipients:
+          - ahmedjackson47@gmail.com

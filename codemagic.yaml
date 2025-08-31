@@ -36,7 +36,7 @@ workflows:
       - build/ios/archive/*.xcarchive
 
     publishing:
-      email:
-        recipients:
-          # ضع ايميلك هنا لو حاب توصلك نتيجة البناء
-          # - you@example.com
+      email:ahmedjackson47@gmail.com
+        recipients:Dev
+          # Dev
+          # - ahmedjackson47@gmail.com

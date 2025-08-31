@@ -1,0 +1,32 @@
+name: platon_sport
+description: PlaToN Sport (Matches - Channels - Cinema - Subscription)
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  http: ^1.2.2
+  intl: ^0.20.2        # ✅ بدّلها
+  webview_flutter: ^4.8.0
+  video_player: ^2.8.6
+  chewie: ^1.7.5
+  url_launcher: ^6.3.0
+  flutter_svg: ^2.0.10+1
+  html: ^0.15.4
+  flutter_vlc_player: ^7.4.0
+  wakelock_plus: ^1.1.1
+  firebase_core: ^4.0.0
+  cloud_firestore: ^6.0.0
+  flutter_inappwebview: ^6.0.0
+
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/sample_matches.json

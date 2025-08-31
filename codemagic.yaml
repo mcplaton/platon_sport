@@ -2,25 +2,56 @@ workflows:
   ios_unsigned:
     name: iOS Unsigned (PlaToN Sport)
     max_build_duration: 60
+
     environment:
-      flutter: stable
-      xcode: latest
+      flutter: stable          # يستخدم آخر قناة Flutter مستقرة
+      xcode: latest            # آخر إصدار Xcode متاح عند Codemagic
       cocoapods: default
+      vars:
+        CM_CLONE_DEPTH: 1
+
+    cache:
+      cache_paths:
+        - ~/.pub-cache
+        - ios/Pods
+        - ~/Library/Caches/CocoaPods
+
     scripts:
+      # 1) جلب الحزم
       - name: Flutter pub get
-        script: flutter pub get
+        script: |
+          flutter --version
+          flutter pub get
+
+      # 2) التأكد من وجود مجلد iOS (احتياطيًا)
       - name: Ensure iOS directory exists
         script: |
           if [ ! -d "ios" ]; then
             flutter create .
           fi
+
+      # 3) تثبيت CocoaPods وفق Podfile (المطلوب iOS 15)
+      - name: Pod install
+        script: |
+          cd ios
+          rm -rf Pods Podfile.lock
+          pod repo update
+          pod install
+          cd ..
+
+      # 4) بناء IPA غير موقّعة
       - name: Build iOS unsigned IPA
         script: |
-          flutter build ipa --release --no-codesign
+          FLUTTER_BUILD_NUMBER=${CM_BUILD_ID:-1}
+          flutter build ipa --release --no-codesign \
+            --build-name=1.0.0 --build-number=$FLUTTER_BUILD_NUMBER
+
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
+      - build/ios/**/*.dSYM.zip
+
     publishing:
       email:
         recipients:
-          - "ahmedjackson47@gmail.com"
+          - ahmedjackson47@gmail.com

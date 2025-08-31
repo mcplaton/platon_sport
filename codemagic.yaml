@@ -1,61 +1,22 @@
 workflows:
   ios_unsigned:
     name: iOS Unsigned (PlaToN Sport)
-    instance_type: mac_mini_m2
     max_build_duration: 60
-
     environment:
       flutter: stable
       xcode: latest
       cocoapods: default
-      vars:
-        IOS_APP_ID: com.example.platonSport  # عدّلها إذا لزم
-
-    cache:
-      cache_paths:
-        - ~/.pub-cache
-        - ~/Library/Caches/CocoaPods
-        - ios/Pods
 
     scripts:
       - name: Flutter clean & pub get
         script: |
-          flutter --version
           flutter clean
-          rm -rf ios/Pods ios/Podfile.lock ios/Flutter/App.framework ios/Flutter/Flutter.framework
           flutter pub get
 
-      - name: Ensure iOS directory exists
+      - name: Build iOS unsigned IPA
         script: |
-          if [ ! -d "ios" ]; then
-            flutter create .
-          fi
-
-      - name: Reset CocoaPods (fresh pods after Podfile change)
-        script: |
-          cd ios
-          pod repo update
-          pod deintegrate
-          pod install --repo-update
-          cd ..
-
-      - name: Build iOS unsigned IPA (no codesign)
-        script: |
-          # يبني التطبيق بدون توقيع ويضمن تضمين Flutter engine
-          flutter build ios --release --no-codesign
-
-          # إنشاء Payload وتجهيز الـ IPA
-          mkdir -p build/ios/ipa/Payload
-          cp -R build/ios/iphoneos/Runner.app build/ios/ipa/Payload/Runner.app
-          cd build/ios/ipa
-          zip -qry ../Runner-unsigned.ipa Payload
-          cd -
+          flutter build ipa --release --no-codesign
 
     artifacts:
-      - build/ios/ipa/Runner-unsigned.ipa
+      - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
-
-    publishing:
-      email:
-        recipients:
-          - ahmedjackson47@gmail.com

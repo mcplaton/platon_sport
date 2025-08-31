@@ -2,35 +2,23 @@ workflows:
   ios_unsigned:
     name: iOS Unsigned (PlaToN Sport)
     max_build_duration: 60
-    instance_type: mac_mini_m1
-
     environment:
-      flutter: stable         # يستخدم أحدث قناة مستقرة من Flutter
-      xcode: 15.4             # إصدار Xcode
+      flutter: stable
+      xcode: latest
       cocoapods: default
-      vars:
-        LC_ALL: en_US.UTF-8
-        LANG: en_US.UTF-8
-        COCOAPODS_DISABLE_STATS: "true"
-
     cache:
       cache_paths:
         - ~/.pub-cache
         - ios/Pods
-
+        - ~/Library/Caches/CocoaPods
     scripts:
-      - name: Show versions
-        script: |
-          flutter --version
-          pod --version
-          xcodebuild -version
-
       - name: Flutter clean & pub get
         script: |
+          flutter --version
           flutter clean
           flutter pub get
 
-      - name: Reset CocoaPods
+      - name: Reset CocoaPods (fresh pods after Podfile change)
         script: |
           cd ios
           rm -rf Pods Podfile.lock
@@ -38,22 +26,20 @@ workflows:
           pod install
           cd ..
 
-      - name: Build iOS unsigned IPA
+      - name: Build iOS unsigned IPA (no codesign)
         script: |
-          # يبني IPA بدون توقيع (مناسب للجيلبريك/التوقيع اليدوي)
-          BUILD_NUMBER=${CM_BUILD_ID:-1}
-          flutter build ipa --release --no-codesign \
-            --build-name=1.0.0 --build-number=$BUILD_NUMBER
+          # تأكد أن ios/Runner/GoogleService-Info.plist موجود إن كنت تستخدم Firebase
+          flutter build ipa --release --no-codesign
 
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
-      - ios/Podfile.lock
 
-    publishing:
-      email:
-        recipients:
-          - ${CM_EMAIL}
-        notify:
-          success: true
-          failure: true
+    # اختياري: شغّل فقط عند الدفع على الفرع main
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true

@@ -6,37 +6,21 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
-      vars:
-        APP_PACKAGE_NAME: com.example.platon_sport
-    triggering:
-      events:
-        - push
-      branch_patterns:
-        - pattern: main
-          include: true
-          source: true
     scripts:
       - name: Flutter pub get
         script: flutter pub get
-
-      # (اختياري) لو فولدر ios مفقود لسبب ما
       - name: Ensure iOS directory exists
         script: |
           if [ ! -d "ios" ]; then
             flutter create .
           fi
-
-      # بناء IPA غير موقّع
       - name: Build iOS unsigned IPA
         script: |
           flutter build ipa --release --no-codesign
-
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
-
     publishing:
-      email:ahmedjackson47@gmail.com
-        recipients:Dev
-          # Dev
-          # - ahmedjackson47@gmail.com
+      email:
+        recipients:
+          - "ahmedjackson47@gmail.com"

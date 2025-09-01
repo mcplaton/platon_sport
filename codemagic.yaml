@@ -2,10 +2,14 @@ workflows:
   ios_unsigned:
     name: iOS Unsigned (PlaToN Sport)
     max_build_duration: 60
+    instance_type: mac_mini_m2
+
     environment:
       flutter: stable
       xcode: latest
       cocoapods: default
+      vars:
+        APP_ID: com.example.platonSport
 
     scripts:
       - name: Flutter clean & pub get
@@ -13,10 +17,73 @@ workflows:
           flutter clean
           flutter pub get
 
-      - name: Build iOS unsigned IPA
+      - name: Ensure iOS directory exists
         script: |
+          if [ ! -d "ios" ]; then
+            flutter create .
+          fi
+
+      - name: Verify GoogleService-Info.plist
+        script: |
+          if [ ! -f ios/Runner/GoogleService-Info.plist ]; then
+            echo "❌ Missing ios/Runner/GoogleService-Info.plist"
+            echo "تنبيه: نزّل الملف من Firebase وضعه في ios/Runner/"
+            exit 1
+          fi
+
+      - name: Reset CocoaPods (fresh install)
+        script: |
+          cd ios
+          rm -rf Pods Podfile.lock
+          pod repo update
+          pod install --verbose
+          cd ..
+
+      # البناء بدون توقيع
+      - name: Build iOS unsigned IPA (no codesign)
+        script: |
+          # يرفع الحد الأدنى تلقائياً لـ iOS 13 لو لزم
           flutter build ipa --release --no-codesign
 
+      # نسخ ملف GoogleService-Info.plist داخل Runner.app لضمان وجوده داخل البندل
+      - name: Copy GoogleService-Info.plist into app bundle
+        script: |
+          APP_PATH=$(find build/ios/archive -name "Runner.xcarchive" -type d | head -n1)/Products/Applications/Runner.app
+          echo "App path: $APP_PATH"
+          if [ -d "$APP_PATH" ]; then
+            cp ios/Runner/GoogleService-Info.plist "$APP_PATH/GoogleService-Info.plist"
+            echo "✅ Copied GoogleService-Info.plist into Runner.app"
+          else
+            echo "⚠️ Runner.app not found yet (will still be inside the IPA produced by Flutter)"
+          fi
+
+      # إنشاء IPA إضافي يدوياً (احتياطي) من الـ .xcarchive
+      - name: Export IPA (manual zip - fallback)
+        script: |
+          set -e
+          ARCHIVE_DIR=$(find build/ios/archive -name "Runner.xcarchive" -type d | head -n1)
+          if [ -n "$ARCHIVE_DIR" ]; then
+            pushd "$ARCHIVE_DIR/Products/Applications"
+            rm -rf Payload
+            mkdir -p Payload
+            cp -R Runner.app Payload/Runner.app
+            zip -r ../../../../Runner-unsigned-manual.zip Payload
+            mv ../../../../Runner-unsigned-manual.zip ../../../../Runner-unsigned-manual.ipa
+            popd
+            echo "✅ Fallback IPA created: build/ios/Runner-unsigned-manual.ipa"
+          else
+            echo "ℹ️ No .xcarchive found to manually export from (Flutter likely produced the IPA already)."
+          fi
+
     artifacts:
+      # IPA الذي يخرجه flutter تلقائياً
       - build/ios/ipa/*.ipa
+      # IPA الاحتياطي الذي أنشأناه يدوياً (إن وُجد)
+      - build/ios/*.ipa
+      # الأرشيف للمراجعة أو التوقيع لاحقاً
       - build/ios/archive/*.xcarchive
+
+    publishing:
+      email:
+        recipients:
+          - ahmedjackson47@gmail.com

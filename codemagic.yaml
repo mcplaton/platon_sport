@@ -1,91 +1,40 @@
-workflows:
-  ios_unsigned:
-    name: iOS Unsigned (PlaToN Sport)
-    max_build_duration: 60
-    environment:
-      flutter: stable
-      xcode: latest
-      cocoapods: default
-    cache:
-      cache_paths:
-        - ~/.pub-cache
-        - ios/Pods
-        - ~/Library/Caches/CocoaPods
-    scripts:
-      - name: Flutter doctor
-        script: |
-          flutter --version
-          flutter doctor -v
+- name: Make unsigned IPA manually (no codesign)
+  script: |
+    set -e
 
-      - name: Ensure ios directory exists (first time only)
-        script: |
-          if [ ! -d "ios" ]; then
-            flutter create .
-          fi
+    # ابحث عن الأرشيف الذي بنيناه في الخطوة السابقة
+    ARCHIVE_PATH="$(find build -type d -name 'Runner.xcarchive' -maxdepth 6 -print | head -n 1)"
+    if [ -z "$ARCHIVE_PATH" ]; then
+      echo "❌ لم يتم العثور على Runner.xcarchive تحت build/"
+      ls -lah build || true
+      exit 65
+    fi
+    echo "✅ Found archive: $ARCHIVE_PATH"
 
-      - name: Flutter clean & pub get
-        script: |
-          flutter clean
-          flutter pub get
+    APP_PATH="$ARCHIVE_PATH/Products/Applications/Runner.app"
+    if [ ! -d "$APP_PATH" ]; then
+      echo "❌ لم يتم العثور على Runner.app داخل الأرشيف"
+      find "$ARCHIVE_PATH" -maxdepth 4 -print
+      exit 66
+    fi
 
-      - name: Reset CocoaPods
-        script: |
-          set -e
-          cd ios
-          rm -rf Pods Podfile.lock
-          pod repo update
-          pod install
-          cd ..
+    # حضّر مجلد الإخراج
+    OUT_DIR="build/ios/ipa"
+    rm -rf "$OUT_DIR"
+    mkdir -p "$OUT_DIR"
 
-      - name: Build iOS & create XCARCHIVE (no codesign)
-        script: |
-          set -e
-          flutter build ios --release --no-codesign
-          xcodebuild \
-            -workspace ios/Runner.xcworkspace \
-            -scheme Runner \
-            -configuration Release \
-            -sdk iphoneos \
-            -archivePath build/ios/archive/Runner.xcarchive \
-            clean archive \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGNING_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            PRODUCT_BUNDLE_IDENTIFIER=com.example.platonSport
-          echo "== Archives found =="
-          find build -type d -name "*.xcarchive" -maxdepth 6 -print
+    # أنشئ Payload وضع داخله .app
+    WORK_DIR="$(mktemp -d)"
+    mkdir -p "$WORK_DIR/Payload"
+    cp -R "$APP_PATH" "$WORK_DIR/Payload/Runner.app"
 
-      - name: Export unsigned IPA from archive
-        script: |
-          set -e
-          ARCHIVE_PATH="$(find build -type d -name 'Runner.xcarchive' -maxdepth 6 -print | head -n 1)"
-          if [ -z "$ARCHIVE_PATH" ]; then
-            echo "❌ لم يتم العثور على Runner.xcarchive تحت build/"
-            ls -lah build || true
-            exit 65
-          fi
-          mkdir -p build/ios/ipa
-          cat > /tmp/ExportOptions.plist <<'PLIST'
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>compileBitcode</key><false/>
-            <key>destination</key><string>export</string>
-            <key>method</key><string>ad-hoc</string>
-            <key>signingStyle</key><string>manual</string>
-            <key>stripSwiftSymbols</key><false/>
-            <key>thinning</key><string>&lt;none&gt;</string>
-            <key>manageAppVersionAndBuildNumber</key><false/>
-          </dict>
-          </plist>
-          PLIST
-          xcodebuild -exportArchive \
-            -archivePath "$ARCHIVE_PATH" \
-            -exportPath build/ios/ipa \
-            -exportOptionsPlist /tmp/ExportOptions.plist \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGNING_IDENTITY=""
-          echo "== IPA contents =="
-          ls -lah build/ios/ipa || true
+    # (اختياري) أضف dSYMs في zip منفصل كأثر بنائي
+    if [ -d "$ARCHIVE_PATH/dSYMs" ]; then
+      (cd "$ARCHIVE_PATH/dSYMs" && zip -r "$PWD/$OUT_DIR/Runner-dSYMs.zip" .)
+    fi
 
-    artifacts:
-      - build/ios/ipa/*.ipa
-      - build/ios/archive/*.xcarchive
+    # أنشئ ملف IPA (هو مجرد zip باسم .ipa)
+    (cd "$WORK_DIR" && zip -r "$PWD/$OUT_DIR/PlaToN_Sport-unsigned.ipa" Payload)
+
+    echo "== IPA contents =="
+    ls -lah "$OUT_DIR"

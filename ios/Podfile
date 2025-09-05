@@ -1,53 +1,36 @@
-# ios/Podfile
-platform :ios, '15.0'
-ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+platform :ios, '13.0'
+use_frameworks! :linkage => :static
+inhibit_all_warnings!
 
-project 'Runner', {
-  'Debug' => :debug,
-  'Profile' => :release,
-  'Release' => :release,
-}
-
-# استخرج مسار Flutter SDK من Generated.xcconfig (أسلوب Flutter الرسمي)
-def flutter_root
-  generated = File.expand_path(File.join('Flutter', 'Generated.xcconfig'), __dir__)
-  unless File.exist?(generated)
-    raise "Generated.xcconfig must exist. Run any Flutter build once."
-  end
-  File.foreach(generated) do |line|
-    match = line.match(/FLUTTER_ROOT\=(.*)/)
-    return match[1].strip if match
-  end
-  raise "FLUTTER_ROOT not found in Generated.xcconfig"
-end
-
-require File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
-
-# هذا يستبدل النداءات القديمة ويضبط إعدادات Flutter تلقائيًا
-flutter_ios_podfile_setup
+flutter_root = File.expand_path('../..', __FILE__)
+load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
 
 target 'Runner' do
-  # تجنّب التحويل القسري إلى static frameworks لأنه يسبب غياب Flutter.h مع بعض الحِزم
-  # لا تضع :linkage => :static هنا
-  use_frameworks!
-
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+  # Firebase (إن وُجدت في pubspec)
+  pod 'Firebase/CoreOnly'
+  pod 'FirebaseFirestore'
+  pod 'FirebaseCoreInternal', :modular_headers => true
+  pod 'GoogleUtilities', :modular_headers => true
+
+  # تأكد من WebView/Video
+  pod 'flutter_inappwebview_ios', :path => '.symlinks/plugins/flutter_inappwebview_ios/ios'
+  pod 'webview_flutter_wkwebview', :path => '.symlinks/plugins/webview_flutter_wkwebview/ios'
+  pod 'video_player_avfoundation', :path => '.symlinks/plugins/video_player_avfoundation/ios'
+  pod 'wakelock_plus', :path => '.symlinks/plugins/wakelock_plus/ios'
+  pod 'flutter_vlc_player', :path => '.symlinks/plugins/flutter_vlc_player/ios'
+
 end
 
 post_install do |installer|
-  # ضروري لإضافة إعدادات Flutter (يشمل HEADER_SEARCH_PATHS وغيرها)
-  installer.pods_project.targets.each do |target|
-    flutter_additional_ios_build_settings(target)
-
-    target.build_configurations.each do |config|
-      # الحد الأدنى لـ iOS (لـ cloud_firestore وغيرها)
-      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      # استثناء arm64 على السيميوليتر لتجنب صداع محاكيات Intel/ARM
-      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
-      # تعطيل Bitcode
+  installer.pods_project.targets.each do |t|
+    t.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
       config.build_settings['ENABLE_BITCODE'] = 'NO'
-      # Swift 5 (احتياطيًا)
       config.build_settings['SWIFT_VERSION'] = '5.0'
+      # يصلح “Flutter/Flutter.h not found”
+      config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
     end
   end
 end

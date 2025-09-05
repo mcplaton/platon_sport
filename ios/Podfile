@@ -7,7 +7,7 @@ project 'Runner', {
   'Release' => :release,
 }
 
-# نكتشف FLUTTER_ROOT موثوق
+# اكتشاف FLUTTER_ROOT بشكل آمن
 flutter_root = ENV['FLUTTER_ROOT']
 if flutter_root.nil? || flutter_root.empty?
   begin
@@ -33,10 +33,24 @@ load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
 use_frameworks! :linkage => :static
 use_modular_headers!
 
+# 🔒 ثبّت سلسلة Firebase iOS SDK على 10.x (تجنّب 11.x)
+$FirebaseVersion = '10.25.0'
+
 flutter_ios_podfile_setup
 
 target 'Runner' do
+  # Pods الخاصة بفلاتر
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+  # 🔒 إجبار Firebase على نسخة 10.25.0 لتفادي Swift 6
+  pod 'Firebase/Core', $FirebaseVersion
+  pod 'FirebaseCore', $FirebaseVersion
+  pod 'FirebaseCoreInternal', $FirebaseVersion
+  pod 'FirebaseFirestore', $FirebaseVersion
+  pod 'FirebaseFirestoreInternal', $FirebaseVersion
+  pod 'GoogleUtilities', '7.13.1'   # متوافق مع سلسلة 10.x
+  pod 'nanopb', '2.30910.0'         # متوافق
+  # ملاحظة: لا تضف أي Firebase 11.x هنا
 end
 
 post_install do |installer|
@@ -46,8 +60,7 @@ post_install do |installer|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
       config.build_settings['SWIFT_VERSION'] = '5.0'
       config.build_settings['ENABLE_BITCODE'] = 'NO'
-
-      # نظّف أي فلاغات قد تفعل مزايا Swift 6 المستقبلية
+      # تنظيف أي فلاغات Swift 6
       flags = config.build_settings['OTHER_SWIFT_FLAGS']
       if flags.is_a?(String)
         cleaned = flags.split(' ').reject { |f|

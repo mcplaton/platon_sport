@@ -1,34 +1,45 @@
 workflows:
-  ios_unsigned_ipa:
-    name: iOS • Unsigned IPA (no codesign)
-    instance_type: mac_mini_m1
+  ios_ipa_unsigned:
+    name: iOS • Unsigned IPA
     max_build_duration: 60
+    instance_type: mac_mini_m1
+
     environment:
       flutter: stable
-      xcode: 15.4
+      xcode: latest
       cocoapods: default
-    cache:
-      cache_paths:
-        - ~/.pub-cache
-        - ios/Pods
-        - /Users/builder/Library/Caches/CocoaPods
+
     scripts:
-      - name: Prep
+      - name: Flutter dependencies
         script: |
           flutter --version
-          dart --version
-          flutter clean
           flutter pub get
-      - name: (optional) Pod install
+
+      - name: Clean (fresh build)
         script: |
-          cd ios
-          pod repo update
-          pod install
-          cd ..
-      - name: Build IPA (no codesign)
+          flutter clean
+          rm -rf ios/Pods ios/Podfile.lock
+
+      - name: Build unsigned IPA
         script: |
+          # يبني ipa بدون كود ساين
           flutter build ipa --release --no-codesign
-          echo "== IPA =="
+          echo "== Listing build/ios/ipa =="
           ls -lah build/ios/ipa || true
+
+      - name: Verify artifact
+        script: |
+          if [ ! -f "build/ios/ipa/Runner.ipa" ]; then
+            echo "❌ IPA not found at build/ios/ipa/Runner.ipa"
+            exit 1
+          fi
+          echo "✅ IPA ready: build/ios/ipa/Runner.ipa"
+
     artifacts:
       - build/ios/ipa/*.ipa
+
+    publishing:
+      # (اختياري) يصلك لينك التحميل على الإيميل
+      email:
+        recipients:
+          - ahmedjackson47@gmail.com

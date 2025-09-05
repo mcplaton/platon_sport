@@ -1,4 +1,4 @@
-platform :ios, '13.0'
+platform :ios, '15.0'
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
 project 'Runner', {
@@ -7,7 +7,7 @@ project 'Runner', {
   'Release' => :release,
 }
 
-# ======== التقاط مسار Flutter SDK بشكل موثوق على Codemagic وغيره ========
+# ==== Resolve FLUTTER_ROOT robustly (works on Codemagic/macOS) ====
 flutter_root = ENV['FLUTTER_ROOT']
 
 if flutter_root.nil? || flutter_root.empty?
@@ -21,13 +21,11 @@ if flutter_root.nil? || flutter_root.empty?
 end
 
 if flutter_root.nil? || flutter_root.empty?
-  # محاولة أخيرة: جرّب الصعود من مسار flutter التنفيذي (قد يفشل إن كان symlink)
   which_flutter = `which flutter`.strip
   if !which_flutter.nil? && !which_flutter.empty?
-    # غالبًا يكون /usr/local/bin/flutter (symlink). نحاول الوصول إلى /usr/local/flutter
-    bin_dir = File.dirname(which_flutter)            # /usr/local/bin
-    maybe_root = File.expand_path('..', bin_dir)     # /usr/local
-    candidate = File.join(maybe_root, 'flutter')     # /usr/local/flutter
+    bin_dir = File.dirname(which_flutter)            # e.g. /usr/local/bin
+    maybe_root = File.expand_path('..', bin_dir)     # e.g. /usr/local
+    candidate = File.join(maybe_root, 'flutter')     # e.g. /usr/local/flutter
     flutter_root = candidate if File.exist?(candidate)
   end
 end
@@ -35,9 +33,9 @@ end
 raise '❌ FLUTTER_ROOT not resolved; cannot load podhelper.rb' if flutter_root.nil? || flutter_root.empty?
 
 load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
-# ========================================================================
+# ===================================================================
 
-# ضروري للبعض (Firestore وما شابه)
+# Firebase/Firestore need frameworks + modular headers
 use_frameworks! :linkage => :static
 use_modular_headers!
 
@@ -51,9 +49,10 @@ post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
     target.build_configurations.each do |config|
+      # Force iOS 15.0 everywhere to satisfy cloud_firestore
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
       config.build_settings['ENABLE_BITCODE'] = 'NO'
       config.build_settings['SWIFT_VERSION'] = '5.0'
-      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
       config.build_settings['DEAD_CODE_STRIPPING'] = 'YES'
     end
   end

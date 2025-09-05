@@ -1,35 +1,30 @@
 workflows:
-  ios_unsigned:
-    name: iOS Unsigned IPA
+  ios_unsigned_ipa:
+    name: iOS unsigned IPA (no codesign)
     max_build_duration: 60
-    instance_type: mac_mini_m1
-
     environment:
-      xcode: 15.4
-      cocoapods: default
       flutter: stable
+      xcode: 15.4
       vars:
-        BUNDLE_ID: com.example.platonSport
-
-    cache:
-      cache_paths:
-        - ~/.pub-cache
-        - ios/Pods
+        IOS_MIN_VER: "15.0"
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: "*"
+          include: true
+          source: true
 
     scripts:
-      - name: Flutter info
+      - name: Show Flutter & clean
         script: |
           flutter --version
-          flutter doctor -v
-
-      - name: Precache & clean
-        script: |
-          flutter precache --ios
           flutter clean
           rm -rf ios/Pods ios/Podfile.lock
+          flutter pub get
 
-      # يضمن Podfile صحيح و iOS 15.0 + يفعّل الإعدادات اللازمة للفFirebase
-      - name: Ensure Podfile (iOS 15, frameworks & modular headers)
+      # يكتب Podfile كامل (نفس الحل المقترح لتثبيت Firebase 10.x وتجنّب Swift 6)
+      - name: Write Podfile (pin Firebase 10.x + Swift 5)
         script: |
           cat > ios/Podfile <<'POD'
           platform :ios, '15.0'
@@ -41,9 +36,8 @@ workflows:
             'Release' => :release,
           }
 
-          # ==== Resolve FLUTTER_ROOT robustly (works on Codemagic/macOS) ====
+          # اكتشاف FLUTTER_ROOT بشكل آمن
           flutter_root = ENV['FLUTTER_ROOT']
-
           if flutter_root.nil? || flutter_root.empty?
             begin
               machine = `flutter --version --machine 2>/dev/null`
@@ -53,108 +47,96 @@ workflows:
               flutter_root = nil
             end
           end
-
           if flutter_root.nil? || flutter_root.empty?
             which_flutter = `which flutter`.strip
             if !which_flutter.nil? && !which_flutter.empty?
-              bin_dir = File.dirname(which_flutter)         # /usr/local/bin
-              maybe_root = File.expand_path('..', bin_dir)  # /usr/local
-              candidate = File.join(maybe_root, 'flutter')  # /usr/local/flutter
+              bin_dir = File.dirname(which_flutter)
+              maybe_root = File.expand_path('..', bin_dir)
+              candidate = File.join(maybe_root, 'flutter')
               flutter_root = candidate if File.exist?(candidate)
             end
           end
-
-          raise '❌ FLUTTER_ROOT not resolved; cannot load podhelper.rb' if flutter_root.nil? || flutter_root.empty?
-
+          raise 'FLUTTER_ROOT not resolved; cannot load podhelper.rb' if flutter_root.nil? || flutter_root.empty?
           load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
-          # ===================================================================
 
-          # Firebase/Firestore need frameworks + modular headers
           use_frameworks! :linkage => :static
           use_modular_headers!
+
+          # 🔒 تثبيت سلسلة Firebase iOS SDK على 10.x (Swift 5)
+          $FirebaseVersion = '10.25.0'
 
           flutter_ios_podfile_setup
 
           target 'Runner' do
+            # Pods الخاصة بفلاتر
             flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+            # 🔒 إجبار Firebase على 10.25.0 لتفادي مشاكل Swift 6
+            pod 'Firebase/Core', $FirebaseVersion
+            pod 'FirebaseCore', $FirebaseVersion
+            pod 'FirebaseCoreInternal', $FirebaseVersion
+            pod 'FirebaseFirestore', $FirebaseVersion
+            pod 'FirebaseFirestoreInternal', $FirebaseVersion
+            pod 'GoogleUtilities', '7.13.1'
+            pod 'nanopb', '2.30910.0'
           end
 
           post_install do |installer|
-            installer.pods_project.targets.each do |target|
-              flutter_additional_ios_build_settings(target)
-              target.build_configurations.each do |config|
+            installer.pods_project.targets.each do |t|
+              flutter_additional_ios_build_settings(t)
+              t.build_configurations.each do |config|
                 config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-                config.build_settings['ENABLE_BITCODE'] = 'NO'
                 config.build_settings['SWIFT_VERSION'] = '5.0'
-                config.build_settings['DEAD_CODE_STRIPPING'] = 'YES'
+                config.build_settings['ENABLE_BITCODE'] = 'NO'
+
+                flags = config.build_settings['OTHER_SWIFT_FLAGS']
+                if flags.is_a?(String)
+                  cleaned = flags.split(' ').reject { |f|
+                    f.include?('enable-upcoming-feature') || f.include?('enable-experimental-feature') || f.include?('swift-version')
+                  }.join(' ')
+                  config.build_settings['OTHER_SWIFT_FLAGS'] = cleaned
+                end
+                config.build_settings['SWIFT_ENABLE_EXPERIMENTAL_FEATURES'] = ''
               end
             end
           end
           POD
 
-      - name: Pod install
+      - name: Ensure GoogleService-Info.plist exists
+        script: |
+          if [ ! -f "ios/Runner/GoogleService-Info.plist" ]; then
+            echo "❌ ios/Runner/GoogleService-Info.plist غير موجود. نزّله من Firebase Console وضعه هنا."
+            ls -lah ios/Runner || true
+            exit 1
+          fi
+
+      - name: CocoaPods install
         script: |
           cd ios
           pod repo update
           pod install --verbose
-          cd ..
+          cd -
 
-      - name: Get packages
+      # بناء IPA بدون توقيع (Flutter يقوم بإنشاء الأرشيف والـ IPA)
+      - name: Build unsigned IPA (no code signing)
         script: |
-          flutter pub get
-
-      - name: Build unsigned archive (no code signing)
-        script: |
-          # سيولّد Runner.xcarchive وأحياناً Runner.ipa مباشرة
+          # اختياري: تثبيت إصدارات FlutterFire المتوافقة في pubspec.yaml قبل هذا الخطوة
+          # تأكد أنّك محدّد:
+          #   firebase_core: 2.24.2
+          #   cloud_firestore: 4.15.9
           flutter build ipa --release --no-codesign
-
-      - name: Export IPA if needed
-        script: |
-          set -e
-          ARCHIVE_PATH="$(find build -type d -name 'Runner.xcarchive' -maxdepth 6 -print | head -n 1 || true)"
-          if [ -n "$ARCHIVE_PATH" ]; then
-            mkdir -p build/ios/ipa
-            cat > /tmp/ExportOptions.plist <<'PLIST'
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-              <key>compileBitcode</key><false/>
-              <key>destination</key><string>export</string>
-              <key>method</key><string>release-testing</string>
-              <key>signingStyle</key><string>manual</string>
-              <key>stripSwiftSymbols</key><false/>
-              <key>thinning</key><string>&lt;none&gt;</string>
-              <key>manageAppVersionAndBuildNumber</key><false/>
-            </dict>
-            </plist>
-            PLIST
-
-            xcodebuild -exportArchive \
-              -archivePath "$ARCHIVE_PATH" \
-              -exportPath build/ios/ipa \
-              -exportOptionsPlist /tmp/ExportOptions.plist \
-              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGNING_IDENTITY=""
-          else
-            echo "ℹ️ لا أرشيف للـ Xcode، ربما Flutter أنشأ IPA مباشرة. نكمل التحقق."
-          fi
+          echo "== Contents =="
+          find build/ios -maxdepth 3 -print
 
       - name: Verify artifact
         script: |
-          echo "== Tree build/ios =="
-          ls -R build/ios || true
           if [ -f "build/ios/ipa/Runner.ipa" ]; then
-            echo "✅ IPA ready at build/ios/ipa/Runner.ipa"
-            exit 0
+            echo "✅ IPA ready: build/ios/ipa/Runner.ipa"
+          else
+            echo "❌ IPA not found, listing:"
+            find build -maxdepth 4 -type f -name "*.ipa" -print
+            exit 1
           fi
-          # fallback: أحياناً فلاتر يخرج ipa مباشرة تحت build/ios/ipa أو مكان آخر
-          FOUND=$(find build -type f -name '*.ipa' -maxdepth 6 | head -n 1 || true)
-          if [ -n "$FOUND" ]; then
-            echo "✅ Found IPA at: $FOUND"
-            mkdir -p build/ios/ipa && cp "$FOUND" build/ios/ipa/Runner.ipa
-            exit 0
-          fi
-          echo "❌ IPA not found"
-          exit 1
 
     artifacts:
       - build/ios/ipa/*.ipa
@@ -163,4 +145,7 @@ workflows:
     publishing:
       email:
         recipients:
-          - you@example.com
+          - "your@email.com"
+        notify:
+          success: true
+          failure: true

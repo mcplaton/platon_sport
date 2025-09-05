@@ -16,15 +16,14 @@ workflows:
           source: true
 
     scripts:
-      - name: Show Flutter & clean
+      - name: Flutter clean & pub get
         script: |
           flutter --version
           flutter clean
           rm -rf ios/Pods ios/Podfile.lock
           flutter pub get
 
-      # يكتب Podfile كامل (نفس الحل المقترح لتثبيت Firebase 10.x وتجنّب Swift 6)
-      - name: Write Podfile (pin Firebase 10.x + Swift 5)
+      - name: Write Podfile (Firebase 10.x, Swift 5, iOS 15)
         script: |
           cat > ios/Podfile <<'POD'
           platform :ios, '15.0'
@@ -36,7 +35,7 @@ workflows:
             'Release' => :release,
           }
 
-          # اكتشاف FLUTTER_ROOT بشكل آمن
+          # Resolve FLUTTER_ROOT robustly
           flutter_root = ENV['FLUTTER_ROOT']
           if flutter_root.nil? || flutter_root.empty?
             begin
@@ -62,23 +61,17 @@ workflows:
           use_frameworks! :linkage => :static
           use_modular_headers!
 
-          # 🔒 تثبيت سلسلة Firebase iOS SDK على 10.x (Swift 5)
+          # ✅ ثبت فقط حزم Firebase العلوية، ودع GoogleUtilities & Internals تُحل تلقائياً
           $FirebaseVersion = '10.25.0'
 
           flutter_ios_podfile_setup
 
           target 'Runner' do
-            # Pods الخاصة بفلاتر
             flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 
-            # 🔒 إجبار Firebase على 10.25.0 لتفادي مشاكل Swift 6
+            # Firebase (علوية فقط)
             pod 'Firebase/Core', $FirebaseVersion
-            pod 'FirebaseCore', $FirebaseVersion
-            pod 'FirebaseCoreInternal', $FirebaseVersion
             pod 'FirebaseFirestore', $FirebaseVersion
-            pod 'FirebaseFirestoreInternal', $FirebaseVersion
-            pod 'GoogleUtilities', '7.13.1'
-            pod 'nanopb', '2.30910.0'
           end
 
           post_install do |installer|
@@ -88,7 +81,7 @@ workflows:
                 config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
                 config.build_settings['SWIFT_VERSION'] = '5.0'
                 config.build_settings['ENABLE_BITCODE'] = 'NO'
-
+                # نظّف أي فلاغات Swift 6 تجي من بيئة البيلدر
                 flags = config.build_settings['OTHER_SWIFT_FLAGS']
                 if flags.is_a?(String)
                   cleaned = flags.split(' ').reject { |f|
@@ -105,27 +98,27 @@ workflows:
       - name: Ensure GoogleService-Info.plist exists
         script: |
           if [ ! -f "ios/Runner/GoogleService-Info.plist" ]; then
-            echo "❌ ios/Runner/GoogleService-Info.plist غير موجود. نزّله من Firebase Console وضعه هنا."
+            echo "❌ ios/Runner/GoogleService-Info.plist غير موجود. نزّله من Firebase Console (مشروع platon-tv) وضعه هنا."
             ls -lah ios/Runner || true
             exit 1
           fi
 
-      - name: CocoaPods install
+      - name: CocoaPods install (with repo update)
         script: |
           cd ios
           pod repo update
-          pod install --verbose
+          pod install --repo-update --verbose
           cd -
 
-      # بناء IPA بدون توقيع (Flutter يقوم بإنشاء الأرشيف والـ IPA)
       - name: Build unsigned IPA (no code signing)
         script: |
-          # اختياري: تثبيت إصدارات FlutterFire المتوافقة في pubspec.yaml قبل هذا الخطوة
-          # تأكد أنّك محدّد:
-          #   firebase_core: 2.24.2
-          #   cloud_firestore: 4.15.9
+          # تأكد pubspec عندك يستخدم:
+          # firebase_core: 2.24.2
+          # cloud_firestore: 4.15.9
           flutter build ipa --release --no-codesign
-          echo "== Contents =="
+          echo "== Search IPA =="
+          find build/ios -maxdepth 3 -type f -name "*.ipa" -print || true
+          echo "== List =="
           find build/ios -maxdepth 3 -print
 
       - name: Verify artifact
@@ -145,7 +138,7 @@ workflows:
     publishing:
       email:
         recipients:
-          - "your@email.com"
+          - "you@example.com"
         notify:
           success: true
           failure: true

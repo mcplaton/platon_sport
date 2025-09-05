@@ -1,8 +1,8 @@
 workflows:
-  ios_ipa_unsigned:
+  ios_unsigned_ipa:
     name: iOS • Unsigned IPA
-    max_build_duration: 60
     instance_type: mac_mini_m1
+    max_build_duration: 60
 
     environment:
       flutter: stable
@@ -10,36 +10,51 @@ workflows:
       cocoapods: default
 
     scripts:
-      - name: Flutter dependencies
+      - name: Flutter SDK & precache (iOS)
         script: |
           flutter --version
+          flutter precache --ios
           flutter pub get
 
-      - name: Clean (fresh build)
+      - name: Clean iOS (fresh Pods)
         script: |
           flutter clean
           rm -rf ios/Pods ios/Podfile.lock
+          # تأكد من وجود Podfile صحيح داخل ios/ (لو ما كان موجود، Flutter بيولّده)
+          cd ios && pod install --repo-update || true
+          cd ..
 
-      - name: Build unsigned IPA
+      - name: Build unsigned IPA (no code signing)
         script: |
-          # يبني ipa بدون كود ساين
+          set -e
+          # يبني IPA غير موقّع في build/ios/ipa
           flutter build ipa --release --no-codesign
-          echo "== Listing build/ios/ipa =="
+          echo "== List after build =="
           ls -lah build/ios/ipa || true
 
-      - name: Verify artifact
+      - name: Verify IPA artifact (any .ipa)
         script: |
-          if [ ! -f "build/ios/ipa/Runner.ipa" ]; then
-            echo "❌ IPA not found at build/ios/ipa/Runner.ipa"
+          set -e
+          echo "== Searching for IPA =="
+          IPA_PATH="$(find build/ios/ipa -maxdepth 1 -type f -name '*.ipa' | head -n 1)"
+          if [ -z "$IPA_PATH" ]; then
+            echo "❌ IPA not found under build/ios/ipa"
+            echo "== Tree build/ios =="
+            find build/ios -maxdepth 3 -print || true
+            echo "== Xcode/Flutter logs above should show the reason. =="
             exit 1
           fi
-          echo "✅ IPA ready: build/ios/ipa/Runner.ipa"
+          echo "✅ IPA found: $IPA_PATH"
+          # انسخها لاسم ثابت إن حبيت
+          mkdir -p build/artifacts
+          cp -f "$IPA_PATH" build/artifacts/PlaToN_Sport_unsigned.ipa
+          ls -lah build/artifacts
 
     artifacts:
-      - build/ios/ipa/*.ipa
+      - build/artifacts/*.ipa
 
     publishing:
       # (اختياري) يصلك لينك التحميل على الإيميل
       email:
         recipients:
-          - ahmedjackson47@gmail.com
+          - you@example.com

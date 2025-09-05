@@ -3,14 +3,14 @@ workflows:
     name: iOS Unsigned (PlaToN Sport)
     max_build_duration: 60
     environment:
-      flutter: stable          # أو ثبّت رقمًا محددًا مثل 3.22.2
-      xcode: latest            # أو 15.4
+      flutter: stable
+      xcode: latest
       cocoapods: default
       vars:
-        APP_ID: "com.example.platonSport"  # طابق Bundle Identifier في Runner
+        BUNDLE_ID: "com.example.platonSport"
 
     scripts:
-      - name: Print tool versions
+      - name: Versions
         script: |
           flutter --version
           xcodebuild -version
@@ -18,33 +18,83 @@ workflows:
 
       - name: Flutter clean & pub get
         script: |
+          set -e
           flutter clean
           rm -rf ios/Pods ios/Podfile.lock
           flutter pub get
 
-      - name: Ensure iOS directory exists (first time only)
+      - name: Ensure iOS dir
         script: |
           if [ ! -d "ios" ]; then
             flutter create .
           fi
 
-      - name: Build iOS unsigned IPA (no codesign)
+      - name: Ensure GoogleService-Info.plist
         script: |
           set -e
-          flutter build ipa --release --no-codesign
-          echo "== List build/ios/ipa =="
-          ls -lah build/ios/ipa || true
-          echo "== List build/ios/archive =="
-          ls -lah build/ios/archive || true
+          if [ -n "$CM_GSI_BASE64" ]; then
+            echo "$CM_GSI_BASE64" | base64 --decode > ios/Runner/GoogleService-Info.plist
+          fi
+          if [ -f ios/Runner/GoogleService-Info.plist ]; then
+            echo "OK: GoogleService-Info.plist present"
+          else
+            echo "WARN: GoogleService-Info.plist missing"
+          fi
 
-    # ⚠️ هذا القسم يجب أن يكون على نفس مستوى scripts (وليس بداخلها)
+      - name: Pod install (fresh)
+        script: |
+          set -e
+          cd ios
+          if ! grep -q "use_frameworks!" Podfile; then
+            echo "use_frameworks! :linkage => :static" | cat - Podfile > /tmp/out && mv /tmp/out Podfile
+          fi
+          if ! grep -q "use_modular_headers!" Podfile; then
+            echo "use_modular_headers!" | cat - Podfile > /tmp/out && mv /tmp/out Podfile
+          fi
+          pod repo update
+          pod install
+          cd ..
+
+      # يبني Runner.xcarchive (نفس اللي ظهر عندك)
+      - name: Build archive with Flutter (no codesign)
+        script: |
+          set -e
+          flutter build ios --release --no-codesign
+
+      # هنا الخطوة التي كانت ناقصة: تصدير IPA من الأرشيف
+      - name: Export unsigned IPA from archive
+        script: |
+          set -e
+          mkdir -p build/ios/ipa
+          cat > /tmp/ExportOptions.plist <<'PLIST'
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>compileBitcode</key><false/>
+            <key>destination</key><string>export</string>
+            <key>method</key><string>ad-hoc</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>stripSwiftSymbols</key><false/>
+            <key>thinning</key><string>&lt;none&gt;</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          PLIST
+
+          xcodebuild -exportArchive \
+            -archivePath build/ios/archive/Runner.xcarchive \
+            -exportPath build/ios/ipa \
+            -exportOptionsPlist /tmp/ExportOptions.plist \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGNING_IDENTITY=""
+
+          echo "== IPA contents =="
+          ls -lah build/ios/ipa
+
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
-      - build/ios/ipa/*.dSYM.zip
-      - flutter_drive.log
 
     publishing:
       email:
         recipients:
-          - ahmedjackson47@gmail.COM
+          - YOUR_EMAIL@EXAMPLE.COM

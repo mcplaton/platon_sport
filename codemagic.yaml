@@ -164,4 +164,3 @@ workflows:
       email:
         recipients:
           - you@example.com
-        notify: true

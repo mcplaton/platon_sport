@@ -7,9 +7,8 @@ project 'Runner', {
   'Release' => :release,
 }
 
-# ==== Resolve FLUTTER_ROOT robustly (works on Codemagic/macOS) ====
+# ===== حل موثوق لاكتشاف FLUTTER_ROOT على CI =====
 flutter_root = ENV['FLUTTER_ROOT']
-
 if flutter_root.nil? || flutter_root.empty?
   begin
     machine = `flutter --version --machine 2>/dev/null`
@@ -19,23 +18,20 @@ if flutter_root.nil? || flutter_root.empty?
     flutter_root = nil
   end
 end
-
 if flutter_root.nil? || flutter_root.empty?
   which_flutter = `which flutter`.strip
   if !which_flutter.nil? && !which_flutter.empty?
-    bin_dir = File.dirname(which_flutter)            # e.g. /usr/local/bin
-    maybe_root = File.expand_path('..', bin_dir)     # e.g. /usr/local
-    candidate = File.join(maybe_root, 'flutter')     # e.g. /usr/local/flutter
+    bin_dir = File.dirname(which_flutter)
+    maybe_root = File.expand_path('..', bin_dir)
+    candidate = File.join(maybe_root, 'flutter')
     flutter_root = candidate if File.exist?(candidate)
   end
 end
-
 raise '❌ FLUTTER_ROOT not resolved; cannot load podhelper.rb' if flutter_root.nil? || flutter_root.empty?
-
 load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
-# ===================================================================
+# =================================================
 
-# Firebase/Firestore need frameworks + modular headers
+# Firebase/Firestore تحتاج frameworks + modular headers
 use_frameworks! :linkage => :static
 use_modular_headers!
 
@@ -47,13 +43,27 @@ end
 
 post_install do |installer|
   installer.pods_project.targets.each do |target|
+    # إعدادات Flutter الإضافية
     flutter_additional_ios_build_settings(target)
+
     target.build_configurations.each do |config|
-      # Force iOS 15.0 everywhere to satisfy cloud_firestore
+      # اجبار Swift 5 وإطفاء ميزات Swift 6 preview
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      config.build_settings['ENABLE_BITCODE'] = 'NO'
-      config.build_settings['SWIFT_VERSION'] = '5.0'
-      config.build_settings['DEAD_CODE_STRIPPING'] = 'YES'
+      config.build_settings['SWIFT_VERSION']               = '5.0'
+      config.build_settings['ENABLE_BITCODE']              = 'NO'
+      config.build_settings['SWIFT_STRICT_CONCURRENCY']    = 'minimal'
+
+      # نظّف أي فلاغات تُفعّل ميزات Swift 6 أو تغيّر نسخة Swift
+      existing_flags = config.build_settings['OTHER_SWIFT_FLAGS']
+      if existing_flags.is_a?(String)
+        cleaned = existing_flags.split(' ').reject { |f|
+          f.include?('enable-upcoming-feature') || f.include?('swift-version') || f.include?('enable-experimental-feature')
+        }.join(' ')
+        config.build_settings['OTHER_SWIFT_FLAGS'] = cleaned
+      end
+
+      # أوقف أي ميزة تجريبية صريحة
+      config.build_settings['SWIFT_ENABLE_EXPERIMENTAL_FEATURES'] = ''
     end
   end
 end

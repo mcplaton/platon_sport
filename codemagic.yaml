@@ -1,40 +1,166 @@
-- name: Make unsigned IPA manually (no codesign)
-  script: |
-    set -e
+# codemagic.yaml — PlaToN Sport
+workflows:
+  ios_unsigned:
+    name: iOS • Unsigned IPA
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+    environment:
+      groups:
+        - ios_defaults
+      vars:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.platonSport
+      flutter: stable
+      xcode: 15.4
+      cocoapods: default
+    cache:
+      cache_paths:
+        - ~/.pub-cache
+        - ~/.gradle/caches
+        - ios/Pods
+        - /Users/builder/Library/Caches/CocoaPods
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+    scripts:
+      # 0) طباعة إصدارات مفيدة
+      - name: Versions
+        script: |
+          flutter --version
+          dart --version
+          pod --version
+          xcodebuild -version
 
-    # ابحث عن الأرشيف الذي بنيناه في الخطوة السابقة
-    ARCHIVE_PATH="$(find build -type d -name 'Runner.xcarchive' -maxdepth 6 -print | head -n 1)"
-    if [ -z "$ARCHIVE_PATH" ]; then
-      echo "❌ لم يتم العثور على Runner.xcarchive تحت build/"
-      ls -lah build || true
-      exit 65
-    fi
-    echo "✅ Found archive: $ARCHIVE_PATH"
+      # 1) جلب الحِزم
+      - name: Flutter pub get
+        script: |
+          flutter clean
+          flutter pub get
 
-    APP_PATH="$ARCHIVE_PATH/Products/Applications/Runner.app"
-    if [ ! -d "$APP_PATH" ]; then
-      echo "❌ لم يتم العثور على Runner.app داخل الأرشيف"
-      find "$ARCHIVE_PATH" -maxdepth 4 -print
-      exit 66
-    fi
+      # 2) إصلاح Podfile و Pod install من الصفر
+      - name: iOS pods bootstrap
+        script: |
+          set -e
+          rm -rf ios/Pods ios/Podfile.lock build/ios
+          # تأكد أن Podfile موجود (إذا غير موجود أنشئه سريعاً)
+          if [ ! -f ios/Podfile ]; then
+            cat > ios/Podfile <<'POD'
+platform :ios, '13.0'
+use_frameworks! :linkage => :static
+inhibit_all_warnings!
 
-    # حضّر مجلد الإخراج
-    OUT_DIR="build/ios/ipa"
-    rm -rf "$OUT_DIR"
-    mkdir -p "$OUT_DIR"
+flutter_root = File.expand_path('../..', __FILE__)
+load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
 
-    # أنشئ Payload وضع داخله .app
-    WORK_DIR="$(mktemp -d)"
-    mkdir -p "$WORK_DIR/Payload"
-    cp -R "$APP_PATH" "$WORK_DIR/Payload/Runner.app"
+target 'Runner' do
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 
-    # (اختياري) أضف dSYMs في zip منفصل كأثر بنائي
-    if [ -d "$ARCHIVE_PATH/dSYMs" ]; then
-      (cd "$ARCHIVE_PATH/dSYMs" && zip -r "$PWD/$OUT_DIR/Runner-dSYMs.zip" .)
-    fi
+  pod 'Firebase/CoreOnly'
+  pod 'FirebaseFirestore'
+  pod 'FirebaseCoreInternal', :modular_headers => true
+  pod 'GoogleUtilities', :modular_headers => true
 
-    # أنشئ ملف IPA (هو مجرد zip باسم .ipa)
-    (cd "$WORK_DIR" && zip -r "$PWD/$OUT_DIR/PlaToN_Sport-unsigned.ipa" Payload)
+  pod 'flutter_inappwebview_ios', :path => '.symlinks/plugins/flutter_inappwebview_ios/ios'
+  pod 'webview_flutter_wkwebview', :path => '.symlinks/plugins/webview_flutter_wkwebview/ios'
+  pod 'video_player_avfoundation', :path => '.symlinks/plugins/video_player_avfoundation/ios'
+  pod 'wakelock_plus', :path => '.symlinks/plugins/wakelock_plus/ios'
+  pod 'flutter_vlc_player', :path => '.symlinks/plugins/flutter_vlc_player/ios'
+end
 
-    echo "== IPA contents =="
-    ls -lah "$OUT_DIR"
+post_install do |installer|
+  installer.pods_project.targets.each do |t|
+    t.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+      config.build_settings['ENABLE_BITCODE'] = 'NO'
+      config.build_settings['SWIFT_VERSION'] = '5.0'
+      config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
+    end
+  end
+end
+POD
+          fi
+          cd ios
+          pod repo update
+          pod install
+          cd ..
+
+      # 3) أرشفة Xcode بدون توقيع
+      - name: Build iOS archive (no codesign)
+        script: |
+          set -e
+          xcodebuild -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath build/ios/archive/Runner.xcarchive \
+            clean archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGNING_IDENTITY="" \
+            PRODUCT_BUNDLE_IDENTIFIER=$PRODUCT_BUNDLE_IDENTIFIER
+
+      # 4) صنع IPA يدويًا من الأرشيف (بدون توقيع)
+      - name: Make unsigned IPA
+        script: |
+          set -e
+          ARCHIVE_PATH="$(find build -type d -name 'Runner.xcarchive' -maxdepth 6 -print | head -n 1)"
+          if [ -z "$ARCHIVE_PATH" ]; then
+            echo "❌ no Runner.xcarchive under build/"; ls -lah build || true; exit 65
+          fi
+          APP_PATH="$ARCHIVE_PATH/Products/Applications/Runner.app"
+          OUT_DIR="build/ios/ipa"
+          rm -rf "$OUT_DIR"; mkdir -p "$OUT_DIR"
+          WORK_DIR="$(mktemp -d)"
+          mkdir -p "$WORK_DIR/Payload"
+          cp -R "$APP_PATH" "$WORK_DIR/Payload/Runner.app"
+          # اختياري: دمج dSYM داخل ipa إن أردت حفظ الرموز
+          if [ -d "$ARCHIVE_PATH/dSYMs/Runner.app.dSYM" ]; then
+            cp -R "$ARCHIVE_PATH/dSYMs/Runner.app.dSYM" "$WORK_DIR/"
+          fi
+          (cd "$WORK_DIR" && zip -r "$PWD/$OUT_DIR/PlaToN_Sport-unsigned.ipa" Payload > /dev/null)
+          echo "== IPA contents =="; ls -lah "$OUT_DIR"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/archive/*.xcarchive
+      - ios/Podfile
+      - ios/Podfile.lock
+      - flutter_drive.log
+
+  android_release:
+    name: Android • Release split APKs
+    max_build_duration: 60
+    instance_type: linux_x2
+    environment:
+      flutter: stable
+    cache:
+      cache_paths:
+        - ~/.pub-cache
+        - ~/.gradle/caches
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+    scripts:
+      - name: Flutter pub get
+        script: |
+          flutter clean
+          flutter pub get
+      - name: Build APK — split per ABI
+        script: |
+          set -e
+          flutter build apk --release --split-per-abi
+          ls -lah build/app/outputs/flutter-apk || true
+    artifacts:
+      - build/app/outputs/flutter-apk/*.apk
+
+# (اختياري) مجموعة متغيرات iOS الافتراضية
+groups:
+  ios_defaults:
+    env:
+      # حدِّث الأيقونات والـ bundle id لاحقًا كما تشاء
+      PRODUCT_BUNDLE_IDENTIFIER: com.example.platonSport

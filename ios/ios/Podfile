@@ -1,36 +1,38 @@
 platform :ios, '13.0'
-use_frameworks! :linkage => :static
-inhibit_all_warnings!
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
-flutter_root = File.expand_path('../..', __FILE__)
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+# يلتقط مسار Flutter SDK بشكل صحيح على أي CI (ومنها Codemagic)
+flutter_root = File.dirname(`which flutter`)
+flutter_root = File.expand_path('..', flutter_root)
 load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
 
+# مطلوبة لعدد من البودات (Firestore وغيره)
+use_frameworks! :linkage => :static
+use_modular_headers!
+
+flutter_ios_podfile_setup
+
 target 'Runner' do
+  # ثبّت كل بودات Flutter/البلجنز
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-
-  # Firebase (إن وُجدت في pubspec)
-  pod 'Firebase/CoreOnly'
-  pod 'FirebaseFirestore'
-  pod 'FirebaseCoreInternal', :modular_headers => true
-  pod 'GoogleUtilities', :modular_headers => true
-
-  # تأكد من WebView/Video
-  pod 'flutter_inappwebview_ios', :path => '.symlinks/plugins/flutter_inappwebview_ios/ios'
-  pod 'webview_flutter_wkwebview', :path => '.symlinks/plugins/webview_flutter_wkwebview/ios'
-  pod 'video_player_avfoundation', :path => '.symlinks/plugins/video_player_avfoundation/ios'
-  pod 'wakelock_plus', :path => '.symlinks/plugins/wakelock_plus/ios'
-  pod 'flutter_vlc_player', :path => '.symlinks/plugins/flutter_vlc_player/ios'
-
 end
 
 post_install do |installer|
-  installer.pods_project.targets.each do |t|
-    t.build_configurations.each do |config|
-      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+
+    # تعطيل bitcode والتوافق مع Swift/Pods
+    target.build_configurations.each do |config|
       config.build_settings['ENABLE_BITCODE'] = 'NO'
       config.build_settings['SWIFT_VERSION'] = '5.0'
-      # يصلح “Flutter/Flutter.h not found”
-      config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+      config.build_settings['DEAD_CODE_STRIPPING'] = 'YES'
     end
   end
 end

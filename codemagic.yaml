@@ -1,5 +1,5 @@
 workflows:
-  ios_unsigned:
+  ios_unsigned_ipa:
     name: iOS Unsigned (PlaToN Sport)
     max_build_duration: 60
     environment:

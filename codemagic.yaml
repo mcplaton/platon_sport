@@ -14,7 +14,7 @@ workflows:
           flutter clean
           flutter pub get
 
-      - name: Overwrite Podfile (iOS 15, static frameworks)
+      - name: Overwrite Podfile (load local podhelper, iOS 15)
         script: |
           set -e
           cat > ios/Podfile <<'POD'
@@ -22,8 +22,8 @@ workflows:
           use_frameworks! :linkage => :static
           inhibit_all_warnings!
 
-          flutter_root = File.expand_path('..', __dir__)
-          load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
+          # ✅ استخدم نسخة podhelper.rb الموجودة محلياً داخل ios/Flutter
+          require File.expand_path('Flutter/podhelper.rb', __dir__)
 
           target 'Runner' do
             flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
@@ -33,6 +33,7 @@ workflows:
             installer.pods_project.targets.each do |t|
               t.build_configurations.each do |config|
                 config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+                # استثناء arm64 لمحاكي iOS فقط (ليس للأجهزة)
                 config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
               end
             end
@@ -50,26 +51,26 @@ workflows:
       - name: Build iOS (no codesign)
         script: |
           set -e
-          # نبني نسخة الجهاز (iphoneos) بدون توقيع
+          # يبني نسخة الجهاز بدون توقيع
           flutter build ios --release --no-codesign
 
-      - name: Ensure flutter_assets in .app (avoid black screen)
+      - name: Ensure flutter_assets in .app (fix black screen)
         script: |
           set -e
           APP_DIR="build/ios/iphoneos/Runner.app"
           test -d "$APP_DIR" || { echo "❌ Runner.app غير موجود"; exit 64; }
 
-          # ضع flutter_assets في جذر .app إن كانت داخل App.framework
+          # انقل flutter_assets إلى جذر .app إذا كانت داخل App.framework
           if [ -d "$APP_DIR/Frameworks/App.framework/flutter_assets" ] && [ ! -d "$APP_DIR/flutter_assets" ]; then
             mv "$APP_DIR/Frameworks/App.framework/flutter_assets" "$APP_DIR/"
           fi
 
-          # انسخ GoogleService-Info.plist إن كان موجودًا في المشروع
+          # انسخ GoogleService-Info.plist إن وجد
           if [ -f "ios/Runner/GoogleService-Info.plist" ] && [ ! -f "$APP_DIR/GoogleService-Info.plist" ]; then
             cp ios/Runner/GoogleService-Info.plist "$APP_DIR/GoogleService-Info.plist"
           fi
 
-          # تحقق
+          # تحقق نهائي
           test -f "$APP_DIR/Frameworks/App.framework/App" || { echo "❌ App.framework/App مفقود"; exit 65; }
           test -d "$APP_DIR/flutter_assets" || { echo "❌ flutter_assets مفقود (سبب شاشة سوداء)"; ls -lah "$APP_DIR"; exit 66; }
           echo "✅ App.framework و flutter_assets موجودان"

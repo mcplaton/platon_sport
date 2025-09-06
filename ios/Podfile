@@ -1,6 +1,7 @@
-# ملف Podfile مصحح خصيصاً لمشاريع Flutter على iOS في بيئات CI/CD مثل Codemagic.
-
-# تعيين الحد الأدنى لإصدار iOS المطلوب.
+#
+# هذا الملف يحل مشكلة `Flutter/Flutter.h`
+# عن طريق إضافة إعدادات البناء الصحيحة.
+#
 platform :ios, '15.0'
 
 # هذا الجزء ضروري لإيجاد ملف podhelper.rb في بيئة Codemagic
@@ -16,6 +17,9 @@ use_modular_headers!
 
 target 'Runner' do
   # هذا السطر يقوم بتثبيت جميع المكتبات (Pods) التي يحتاجها مشروع Flutter تلقائياً.
-  # هذا هو الحل الصحيح والوحيد لتجنب المشاكل المعقدة في الـ `post_install`.
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+  # يمكنك إضافة المكتبات يدوياً هنا إن لزم الأمر.
+  # pod 'Firebase/Firestore', '~> 10.15.0'
+
 end

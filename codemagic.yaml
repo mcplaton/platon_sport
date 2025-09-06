@@ -15,42 +15,53 @@ workflows:
           flutter clean
           flutter pub get
 
-      - name: Prepare iOS Podfile (iOS 15 + static frameworks)
+      - name: Prepare Podfile (iOS 15, static frameworks, remove GoogleUtilities pin)
         script: |
           set -e
           cd ios
 
-          # 1) اجعل الهدف iOS 15.0
+          # اضبط الهدف على iOS 15
           if grep -q "^platform :ios" Podfile; then
             sed -i.bak "s/^platform :ios.*/platform :ios, '15.0'/" Podfile
           else
             echo "platform :ios, '15.0'" | cat - Podfile > Podfile.tmp && mv Podfile.tmp Podfile
           fi
 
-          # 2) static frameworks
+          # static frameworks
           if grep -q "^use_frameworks!" Podfile; then
             sed -i.bak "s/^use_frameworks!.*/use_frameworks! :linkage => :static/" Podfile
           else
             printf "\nuse_frameworks! :linkage => :static\n" >> Podfile
           fi
 
-          # 3) post_install لضبط IPHONEOS_DEPLOYMENT_TARGET
+          # اضف مصدر السبيكس بشكل صريح
+          if ! grep -q "^source 'https://github.com/CocoaPods/Specs.git'" Podfile; then
+            printf "source 'https://github.com/CocoaPods/Specs.git'\n$(cat Podfile)" > Podfile
+          fi
+
+          # احذف أي تثبيت إجباري لنسخة GoogleUtilities (هو سبب الخطأ)
+          sed -i.bak "/pod ['\"]GoogleUtilities['\"]/d" Podfile || true
+
+          # ثبّت post_install لضبط الـ deployment target
           if ! grep -q "post_install do" Podfile; then
-            printf '\npost_install do |installer|\n' >> Podfile
-            printf '  installer.pods_project.targets.each do |t|\n' >> Podfile
-            printf '    t.build_configurations.each do |config|\n' >> Podfile
-            printf '      config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] = "15.0"\n' >> Podfile
-            printf '    end\n' >> Podfile
-            printf '  end\n' >> Podfile
-            printf 'end\n' >> Podfile
+            cat >> Podfile <<'RUBY'
+post_install do |installer|
+  installer.pods_project.targets.each do |t|
+    t.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+    end
+  end
+end
+RUBY
           fi
           cd -
 
-      - name: Update CocoaPods repos
+      - name: Update CocoaPods repos (fix GoogleUtilities mismatch)
         script: |
           set -e
           cd ios
           pod repo update
+          pod install --repo-update
           cd -
 
       - name: Build iOS (no codesign)
@@ -62,11 +73,9 @@ workflows:
         script: |
           set -e
           APP_DIR="build/ios/iphoneos/Runner.app"
-
           if [ -d "$APP_DIR/Frameworks/App.framework/flutter_assets" ]; then
             mv "$APP_DIR/Frameworks/App.framework/flutter_assets" "$APP_DIR/"
           fi
-
           if [ -f "ios/Runner/GoogleService-Info.plist" ] && [ ! -f "$APP_DIR/GoogleService-Info.plist" ]; then
             cp ios/Runner/GoogleService-Info.plist "$APP_DIR/GoogleService-Info.plist"
           fi

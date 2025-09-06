@@ -1,18 +1,22 @@
 platform :ios, '15.0'
-use_frameworks! :linkage => :static
-inhibit_all_warnings!
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
-# ✅ حمّل podhelper.rb مباشرةً من Flutter SDK في Codemagic
+# اجلب podhelper.rb من Flutter SDK في بيئة Codemagic
 flutter_root = ENV['FLUTTER_ROOT']
 if flutter_root.nil? || flutter_root.empty?
-  # مسار احتياطي بالاعتماد على مكان flutter binary
   flutter_bin = `which flutter`.strip
-  # flutter/bin/flutter => ارجع ثلاث مستويات لمجلد الجذر
   flutter_root = File.expand_path('../../..', flutter_bin)
 end
 load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
 
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
 target 'Runner' do
+  # ملاحظة: لا نستخدم use_frameworks! هنا لتفادي مشكلة Flutter.h
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 
@@ -20,8 +24,10 @@ post_install do |installer|
   installer.pods_project.targets.each do |t|
     t.build_configurations.each do |config|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      # استثناء arm64 للمُحاكي فقط (لا يؤثر على الأجهزة)
+      # استثناء arm64 للمحاكي فقط
       config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
+      # يسمح للهيدرز غير المعيارية داخل الموديولات (يتفادى أخطاء بعض البلَغنز)
+      config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
     end
   end
 end

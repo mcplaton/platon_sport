@@ -1,4 +1,4 @@
-# Podfile مصحح خصيصاً لمشاريع Flutter على iOS في بيئات CI/CD مثل Codemagic.
+# ملف Podfile مصحح خصيصاً لمشاريع Flutter على iOS في بيئات CI/CD مثل Codemagic.
 
 # تعيين الحد الأدنى لإصدار iOS المطلوب.
 platform :ios, '15.0'
@@ -24,21 +24,17 @@ target 'Runner' do
 end
 
 post_install do |installer|
-  # هذا هو الـ hook الصحيح لمشاريع Flutter الحديثة.
-  flutter_post_install(installer) if defined?(flutter_post_install)
-
-  # نضبط Target لكل البودات للتوافق مع iOS 15.0
+  # هذا الـ hook يقوم بتطبيق التغييرات اللازمة يدوياً
+  # وهو بديل عن استدعاء flutter_post_install المسبب للمشاكل
   installer.pods_project.targets.each do |t|
     t.build_configurations.each do |cfg|
       cfg.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      # هذه الإعدادات تضمن أن الـ linker يعمل بشكل صحيح
       cfg.build_settings['OTHER_LDFLAGS'] ||= ['$(inherited)']
       cfg.build_settings['OTHER_CFLAGS']  ||= ['$(inherited)']
     end
   end
 
   # حل مشكلة GoogleUtilities وبعض المكتبات الأخرى عن طريق تفعيل DEFINES_MODULE.
-  # هذا يحل مشاكل الـ frameworks عند استخدام `static`.
   %w[GoogleUtilities FirebaseCore FirebaseCoreInternal FirebaseCoreExtension FirebaseFirestore].each do |name|
     pt = installer.pod_targets.find { |x| x.name == name }
     next unless pt

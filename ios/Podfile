@@ -16,30 +16,6 @@ use_modular_headers!
 
 target 'Runner' do
   # هذا السطر يقوم بتثبيت جميع المكتبات (Pods) التي يحتاجها مشروع Flutter تلقائياً.
+  # هذا هو الحل الصحيح والوحيد لتجنب المشاكل المعقدة في الـ `post_install`.
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-
-  # يمكنك إضافة المكتبات يدوياً هنا إن لزم الأمر.
-  # pod 'firebase_core', '~> 10.15'
-
-end
-
-post_install do |installer|
-  # هذا الـ hook يقوم بتطبيق التغييرات اللازمة يدوياً
-  # وهو بديل عن استدعاء flutter_post_install المسبب للمشاكل
-  installer.pods_project.targets.each do |t|
-    t.build_configurations.each do |cfg|
-      cfg.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      cfg.build_settings['OTHER_LDFLAGS'] ||= ['$(inherited)']
-      cfg.build_settings['OTHER_CFLAGS']  ||= ['$(inherited)']
-    end
-  end
-
-  # حل مشكلة GoogleUtilities وبعض المكتبات الأخرى عن طريق تفعيل DEFINES_MODULE.
-  %w[GoogleUtilities FirebaseCore FirebaseCoreInternal FirebaseCoreExtension FirebaseFirestore].each do |name|
-    pt = installer.pod_targets.find { |x| x.name == name }
-    next unless pt
-    pt.user_build_configurations.keys.each do |cfg|
-      pt.build_settings(cfg)['DEFINES_MODULE'] = 'YES'
-    end
-  end
 end

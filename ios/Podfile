@@ -1,64 +1,48 @@
-# ios/Podfile  — نسخة مستقرة تعمل على Codemagic و Mac
+# ------------------------------------------------------------
+# Podfile for Flutter iOS with Firebase/VLC and iOS 15+
+# ------------------------------------------------------------
+
 platform :ios, '15.0'
+
+# تأكد أن Codemagic يضع هذا المتغيّر
+flutter_root = ENV['FLUTTER_ROOT'] || '/Users/builder/programs/flutter'
+raise "FLUTTER_ROOT not set" unless File.exist?(flutter_root)
+
+load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
+
+# نحتاج دينامك/ستاتك وفق بعض البودات (VLC/Firebase)
 use_frameworks! :linkage => :static
 use_modular_headers!
 
-# اجلب مسار فلتر من البيئة إن وُجد، وإلا استخرجه عبر flutter --version
-flutter_root = ENV['FLUTTER_ROOT']
-if flutter_root.nil? || flutter_root.empty?
-  # هذا السطر يستخرج مجلد الـ SDK من أمر flutter --version --machine
-  version_json = `flutter --version --machine`
-  # تجنّب محارف خاصة
-  version_json = version_json.to_s
-  engine_root_match = version_json.match(/"engineRoot":"([^"]+)"/)
-  if engine_root_match
-    engine_root = engine_root_match[1]
-    # engineRoot ينتهي بـ flutter/bin/cache/artifacts/engine
-    flutter_root = File.expand_path('../../..', engine_root)
-  else
-    # fallback: جرّب المسار القياسي لدى Codemagic
-    flutter_root = '/usr/local/flutter'
-  end
-end
-
-require File.expand_path(File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb'))
-
-# إعدادات Flutter الافتراضية
-flutter_ios_podfile_setup
-
 target 'Runner' do
-  use_frameworks! :linkage => :static
-  use_modular_headers!
-
-  # منصّة Flutter
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 
-  # Firebase/Firestore أحياناً تحتاج modular headers
-  pod 'GoogleUtilities', '>= 7.13.3', :modular_headers => true
-  pod 'FirebaseCoreInternal', :modular_headers => true
-  pod 'FirebaseFirestore', :modular_headers => true
-
-  # دعم WebView و VLC (تُسحب أوتوماتيكياً من plugins، هذه للتوكيد فقط)
-  # pod 'webview_flutter_wkwebview', :path => '.symlinks/plugins/webview_flutter_wkwebview/ios'
-  # pod 'flutter_vlc_player',        :path => '.symlinks/plugins/flutter_vlc_player/ios'
+  # إن كان لديك Pods يدوية، أضفها هنا (عادةً لا تحتاج لشيء إضافي مع Flutter)
+  # مثال (ليس مطلوباً غالباً):
+  # pod 'GoogleUtilities', '7.13.3', :modular_headers => true
 end
 
 post_install do |installer|
+  # إعدادات Flutter الإضافية لكل Target
   installer.pods_project.targets.each do |target|
-    target.build_configurations.each do |config|
-      # تعطيل Bitcode (مطلوب حالياً مع معظم الحِزم)
-      config.build_settings['ENABLE_BITCODE'] = 'NO'
-      # حل مشاكل Swift الحديثة
-      config.build_settings['SWIFT_VERSION'] = '5.0'
-      # إصلاح Missing Flutter/Flutter.h لبعض البودات
-      header_search = '$(TOOLCHAIN_DIR)/usr/include $(SDKROOT)/usr/include'
-      config.build_settings['HEADER_SEARCH_PATHS'] = header_search
+    flutter_additional_ios_build_settings(target)
 
-      # Firebase/GoogleUtilities يحتاج Module Maps حين نستخدم static linking
-      config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
+    # توحيد الحد الأدنى للنظام
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+      # إصلاح "Flutter/Flutter.h not found" أحياناً
+      config.build_settings['OTHER_LDFLAGS'] ||= ['$(inherited)']
+      config.build_settings['OTHER_CFLAGS']  ||= ['$(inherited)']
     end
   end
 
-  # إعدادات Flutter الإضافية
-  flutter_additional_ios_build_settings(installer)
+  # إصلاح تحذير/خطأ Firebase + GoogleUtilities مع Swift كـ static
+  installer.pod_targets.each do |pod_target|
+    if ['GoogleUtilities', 'FirebaseCore', 'FirebaseCoreInternal', 'FirebaseFirestore', 'FirebaseAppCheckInterop', 'FirebaseCoreExtension'].include?(pod_target.name)
+      pod_target.user_build_configurations.keys.each do |config_name|
+        build_settings = pod_target.build_settings(config_name)
+        build_settings['DEFINES_MODULE'] = 'YES'
+      end
+    end
+  end
 end

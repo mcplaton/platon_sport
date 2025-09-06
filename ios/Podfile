@@ -1,7 +1,8 @@
+# ios/Podfile
 platform :ios, '15.0'
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
-# اجلب podhelper.rb من Flutter SDK في بيئة Codemagic
+# اجلب مسار Flutter SDK (يعمل محلياً وعلى Codemagic)
 flutter_root = ENV['FLUTTER_ROOT']
 if flutter_root.nil? || flutter_root.empty?
   flutter_bin = `which flutter`.strip
@@ -9,25 +10,33 @@ if flutter_root.nil? || flutter_root.empty?
 end
 load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
 
+# ✅ مهم: فعّل modular headers عالمياً كي تسمح لـ GoogleUtilities و FirebaseCoreInternal بتوليد module maps
+use_modular_headers!
+
+# (لا نستخدم use_frameworks! إلا لو اضطررنا. إبقِه مُعطلاً لتجنب أخطاء Flutter/Flutter.h)
+# use_frameworks! :linkage => :static
+
 project 'Runner', {
-  'Debug' => :debug,
+  'Debug'   => :debug,
   'Profile' => :release,
   'Release' => :release,
 }
 
 target 'Runner' do
-  # ملاحظة: لا نستخدم use_frameworks! هنا لتفادي مشكلة Flutter.h
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 
 post_install do |installer|
   installer.pods_project.targets.each do |t|
     t.build_configurations.each do |config|
+      # حد أدنى iOS 15 (يغطي 15.8.3 وحتى iOS 18+)
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      # استثناء arm64 للمحاكي فقط
+      # استثناء arm64 للمحاكي
       config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
-      # يسمح للهيدرز غير المعيارية داخل الموديولات (يتفادى أخطاء بعض البلَغنز)
+      # السماح للهيدرز غير المعيارية داخل الموديولات (تفيد بعض البلغنز)
       config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
+      # تقليل أخطاء الربط في بيئات CI
+      config.build_settings['DEAD_CODE_STRIPPING'] = 'YES'
     end
   end
 end

@@ -1,9 +1,6 @@
-# Podfile — iOS 15+ / Firebase / بدون توقيع
 platform :ios, '15.0'
 use_frameworks! :linkage => :static
 use_modular_headers!
-
-# تأكد أن flutter pub get يتم قبل أي pod install
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
 project 'Runner', {
@@ -12,33 +9,33 @@ project 'Runner', {
   'Release' => :release,
 }
 
-# ✅ نعتمد على نسخة podhelper.rb التي ينسخها Flutter داخل ios/Flutter
-# لو الملف مفقود، فهذا يعني أن flutter لم يجهّز iOS بعد. الحل في Codemagic بالأسفل.
-require File.expand_path('Flutter/podhelper.rb', __dir__)
+# ✅ حمّل podhelper.rb من مسار Flutter الرسمي (لا تعتمد على ios/Flutter/podhelper.rb)
+flutter_root = ENV['FLUTTER_ROOT']
+if flutter_root.nil? || flutter_root.empty?
+  flutter_root = `flutter --version --machine 2>/dev/null | grep -o '"engineRevision":"[^"]*"' || true`
+  flutter_root = File.expand_path('..', __dir__) # fallback
+end
+load File.join(File.expand_path('..', __dir__), 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
 
 target 'Runner' do
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 
-  # إن احتجت Firebase Analytics (اختياري):
-  # pod 'Firebase/Analytics'
-
-  # إن أردت منع إشكالات module maps:
+  # 🔧 إصلاح مشكلة الـ Swift static + module maps
   pod 'GoogleUtilities', '7.13.1', :modular_headers => true
+  # إذا احتجت Firebase منتجات إضافية فعّلها هنا (اختياري):
+  # pod 'Firebase/Analytics'
 end
 
-# لمنع مشاكل Swift مع بعض الـ Pods
 post_install do |installer|
   installer.pods_project.targets.each do |t|
     t.build_configurations.each do |config|
-      # عطّل bitcode
       config.build_settings['ENABLE_BITCODE'] = 'NO'
-      # Swift 5
       config.build_settings['SWIFT_VERSION'] = '5.0'
-      # توزيع آمن (يحل أخطاء "SwiftCompile failed")
       config.build_settings['BUILD_LIBRARY_FOR_DISTRIBUTION'] = 'YES'
+      # إجبار ربط إطار Flutter
+      config.build_settings['OTHER_LDFLAGS'] = '$(inherited) -framework Flutter'
     end
-
-    # فكّ الربط الديناميكي لبعض البودات التي ترفض static (نادراً)
+    # gRPC كـ static لتقليل تعارضات الدمج
     if t.name == 'gRPC-C++' || t.name == 'gRPC-Core'
       t.build_configurations.each do |config|
         config.build_settings['MACH_O_TYPE'] = 'staticlib'

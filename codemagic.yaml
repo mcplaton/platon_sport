@@ -1,22 +1,35 @@
+# codemagic.yaml
 workflows:
   ios_unsigned_ipa:
-    name: iOS Unsigned (PlaToN Sport)
+    name: iOS unsigned IPA
     max_build_duration: 60
     environment:
       flutter: stable
-      xcode: latest
+      xcode: 15.4
       cocoapods: default
+      vars:
+        BUNDLE_ID: "com.example.platonSport"
+        IOS_MIN_SDK: "15.0"
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: "main"
+          include: true
+          source: true
     scripts:
       - name: Flutter clean & pub get
         script: |
           set -e
+          flutter --version
           flutter clean
           flutter pub get
 
-      - name: Update CocoaPods repos & install
+      - name: CocoaPods clean & install (with repo update)
         script: |
           set -e
           cd ios
+          rm -rf Pods Podfile.lock
           pod repo update
           pod install --repo-update
           cd -
@@ -24,25 +37,19 @@ workflows:
       - name: Build iOS (no codesign)
         script: |
           set -e
+          # نأكّد نشر الحد الأدنى 15.0
+          /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion ${IOS_MIN_SDK}" ios/Flutter/AppFrameworkInfo.plist || true
           flutter build ios --release --no-codesign
 
-      - name: Ensure flutter_assets in .app (fix black screen)
+      - name: Ensure flutter assets exist (prevent black screen)
         script: |
           set -e
           APP_DIR="build/ios/iphoneos/Runner.app"
           test -d "$APP_DIR" || { echo "❌ Runner.app غير موجود"; exit 64; }
-
-          # انقل flutter_assets من داخل App.framework إن لزم
+          # في بعض الإصدارات تُوضع الأصول داخل App.framework
           if [ -d "$APP_DIR/Frameworks/App.framework/flutter_assets" ] && [ ! -d "$APP_DIR/flutter_assets" ]; then
             mv "$APP_DIR/Frameworks/App.framework/flutter_assets" "$APP_DIR/"
           fi
-
-          # انسخ GoogleService-Info.plist إن وجد
-          if [ -f "ios/Runner/GoogleService-Info.plist" ] && [ ! -f "$APP_DIR/GoogleService-Info.plist" ]; then
-            cp ios/Runner/GoogleService-Info.plist "$APP_DIR/GoogleService-Info.plist"
-          fi
-
-          # تحقق نهائي (منع شاشة سوداء)
           test -f "$APP_DIR/Frameworks/App.framework/App" || { echo "❌ App.framework/App مفقود"; exit 65; }
           test -d "$APP_DIR/flutter_assets" || { echo "❌ flutter_assets مفقود (سبب شاشة سوداء)"; exit 66; }
           echo "✅ App.framework و flutter_assets موجودان"
@@ -50,14 +57,31 @@ workflows:
       - name: Package unsigned IPA
         script: |
           set -e
-          APP_DIR="build/ios/iphoneos/Runner.app"
           OUT_DIR="build/ios/ipa"
+          APP_DIR="build/ios/iphoneos/Runner.app"
           mkdir -p "$OUT_DIR/Payload"
           cp -R "$APP_DIR" "$OUT_DIR/Payload/Runner.app"
           (cd "$OUT_DIR" && zip -qry "Runner-unsigned.ipa" Payload)
           rm -rf "$OUT_DIR/Payload"
-          ls -lah "$OUT_DIR"
+          echo "✅ IPA: $OUT_DIR/Runner-unsigned.ipa"
+
+      - name: Verify artifact
+        script: |
+          set -e
+          if [ -f "build/ios/ipa/Runner-unsigned.ipa" ]; then
+            echo "✅ IPA ready: build/ios/ipa/Runner-unsigned.ipa"
+          else
+            echo "❌ IPA not found, listing:"
+            find build -maxdepth 4 -type f -name "*.ipa" -print
+            exit 1
+          fi
 
     artifacts:
-      - build/ios/ipa/*.ipa
-      - build/ios/iphoneos/Runner.app/**
+      - build/ios/ipa/Runner-unsigned.ipa
+    publishing:
+      email:
+        recipients:
+          - "you@example.com"
+        notify:
+          success: true
+          failure: true

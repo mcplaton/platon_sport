@@ -8,11 +8,10 @@ platform :ios, '15.0'
 # هذا الجزء يحدد المجلدات التي سيتم البحث فيها عن المكتبات (Pods)
 target 'Runner' do
   use_frameworks!
-  # هذه السطور مهمة جداً لضمان أن Flutter يعمل بشكل صحيح مع CocoaPods
-  # لا تقم بحذفها
-  flutter_prebuild_script = "$FLUTTER_ROOT/packages/flutter_tools/bin/podhelper.rb"
-  require_relative flutter_prebuild_script
-
+  # هذا السطر تم تعديله ليكون متوافقاً مع بيئة البناء
+  # لأنه لا يسمح بمسارات المتغيرات
+  require_relative '../.ios/Flutter/podhelper.rb'
+  
   # هذا الكود هو لحل مشاكل التوقيع (Codesign) الشائعة
   # التي قد تواجهها المكتبات
   # لا تقم بحذفه

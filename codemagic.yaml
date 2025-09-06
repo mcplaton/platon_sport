@@ -46,7 +46,6 @@ workflows:
                 config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
                 config.build_settings['SWIFT_VERSION'] = '5.0'
                 config.build_settings['ENABLE_BITCODE'] = 'NO'
-                # نظّف أي فلاغات سويفت غريبة قد تسبب أخطاء
                 flags = config.build_settings['OTHER_SWIFT_FLAGS']
                 if flags.is_a?(String)
                   cleaned = flags.split(' ').reject { |f|
@@ -75,16 +74,33 @@ workflows:
 
       - name: Build iOS (Flutter, release, no codesign)
         script: |
-          # Flutter هو اللي يكوّن Runner.app كاملة مع App.framework و flutter_assets
           flutter build ios --release --no-codesign
 
-      - name: Verify Flutter assets exist
+      - name: Verify Flutter assets exist (new layout)
         script: |
           APP_DIR="build/ios/iphoneos/Runner.app"
           test -d "$APP_DIR" || { echo "❌ Runner.app غير موجود"; exit 64; }
-          test -d "$APP_DIR/Frameworks/App.framework" || { echo "❌ App.framework مفقود (سبب شاشة سوداء)"; exit 65; }
-          test -d "$APP_DIR/flutter_assets" || { echo "❌ مجلد flutter_assets مفقود (سبب شاشة سوداء)"; exit 66; }
-          echo "✅ App.framework و flutter_assets موجودان"
+
+          APP_FW="$APP_DIR/Frameworks/App.framework"
+          ASSETS_NEW="$APP_FW/flutter_assets"
+          ASSETS_OLD="$APP_DIR/flutter_assets"
+
+          if [ -d "$ASSETS_NEW" ]; then
+            echo "✅ وجدنا flutter_assets داخل App.framework:"
+            ls -lah "$ASSETS_NEW" | head -n 20
+          elif [ -d "$ASSETS_OLD" ]; then
+            echo "✅ وجدنا flutter_assets في جذر Runner.app:"
+            ls -lah "$ASSETS_OLD" | head -n 20
+          else
+            echo "❌ لم نعثر على flutter_assets لا داخل App.framework ولا في جذر Runner.app (سبب شاشة سوداء)"
+            echo "محتويات Runner.app/Frameworks:"
+            ls -lah "$APP_DIR/Frameworks" || true
+            exit 66
+          fi
+
+          # تأكد أيضًا من وجود App.framework
+          test -d "$APP_FW" || { echo "❌ App.framework مفقود"; exit 65; }
+          echo "✅ App.framework موجود"
 
       - name: Package IPA (manual)
         script: |

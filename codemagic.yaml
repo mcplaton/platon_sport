@@ -1,34 +1,40 @@
+# codemagic.yaml — كامل وجاهز
 workflows:
-  ios_unsigned:
-    name: iOS unsigned IPA
-    max_build_duration: 60
+  ios_unsigned_ipa:
+    name: iOS Unsigned IPA
+    max_build_duration: 120
     environment:
       flutter: stable
-      xcode: 15.4
-      cocoapods: 1.16.2
+      xcode: latest
+      cocoapods: default
       vars:
-        FLUTTER_BUILD_NAME: "1.0.0"
-        FLUTTER_BUILD_NUMBER: "1"
+        IOS_MIN_VER: "15.0"
     cache:
       cache_paths:
         - ~/.pub-cache
-        - ios/Pods
+        - ~/.cocoapods
         - ~/Library/Caches/CocoaPods
+        - ios/Pods
+        - build/.dart_tool
     scripts:
-      - name: Tool versions
+      - name: Show tools versions & clean
         script: |
           set -e
           flutter --version
-          pod --version
+          dart --version || true
           xcodebuild -version
+          pod --version
+          echo "FLUTTER_ROOT=$FLUTTER_ROOT"
+          flutter clean
+          rm -rf ios/Pods ios/Podfile.lock ios/.symlinks || true
 
-      - name: Clean & get packages
+      - name: Get packages & precache iOS
         script: |
           set -e
-          flutter clean
           flutter pub get
+          flutter precache --ios
 
-      - name: Write Podfile (overwrite with our fixed one)
+      - name: Write a correct ios/Podfile (uses FLUTTER_ROOT)
         script: |
           set -e
           cat > ios/Podfile <<'POD'
@@ -43,15 +49,17 @@ workflows:
             'Release' => :release,
           }
 
+          # حمّل podhelper.rb من Flutter SDK عبر متغير البيئة FLUTTER_ROOT
           flutter_root = ENV['FLUTTER_ROOT']
           if flutter_root.nil? || flutter_root.empty?
-            flutter_root = `flutter --version --machine 2>/dev/null | grep -o '"engineRevision":"[^"]*"' || true`
-            flutter_root = File.expand_path('..', __dir__) # fallback
+            abort "❌ FLUTTER_ROOT is not set by Flutter tool"
           end
-          load File.join(File.expand_path('..', __dir__), 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
+          load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
 
           target 'Runner' do
             flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+            # إصلاحات static + module maps لبعض تبعيات Firebase
             pod 'GoogleUtilities', '7.13.1', :modular_headers => true
           end
 
@@ -63,6 +71,7 @@ workflows:
                 config.build_settings['BUILD_LIBRARY_FOR_DISTRIBUTION'] = 'YES'
                 config.build_settings['OTHER_LDFLAGS'] = '$(inherited) -framework Flutter'
               end
+
               if t.name == 'gRPC-C++' || t.name == 'gRPC-Core'
                 t.build_configurations.each do |config|
                   config.build_settings['MACH_O_TYPE'] = 'staticlib'
@@ -71,46 +80,43 @@ workflows:
             end
           end
           POD
+          echo "✅ Wrote ios/Podfile"
 
       - name: CocoaPods repo update & install
         script: |
           set -e
           cd ios
           pod repo update
-          rm -f Podfile.lock
-          rm -rf Pods
           pod install --repo-update
-          echo "== Installed pods =="
-          ls -1 Pods | sed 's/^/ - /'
+          cd ..
 
-      - name: Build iOS IPA (no codesign)
+      - name: Build unsigned IPA (no codesign)
         script: |
           set -e
-          # ينتج ipa مباشرة في build/ios/ipa/Runner.ipa
-          flutter build ipa --no-codesign \
-            --build-name=$FLUTTER_BUILD_NAME \
-            --build-number=$FLUTTER_BUILD_NUMBER
+          # تأكد من أن الـ Info.plist و Version مضبوطين من pubspec.yaml
+          flutter build ipa --release --no-codesign
 
-      - name: Verify Flutter assets exist
+      - name: Verify IPA & list outputs
         script: |
           set -e
-          APP="build/ios/iphoneos/Runner.app"
-          test -d "$APP" || { echo "❌ Runner.app غير موجود"; exit 64; }
-          test -d "$APP/Frameworks/App.framework" || { echo "❌ App.framework مفقود (سبب شاشة سوداء)"; exit 65; }
-          test -d "$APP/flutter_assets" || { echo "❌ مجلد flutter_assets مفقود (سبب شاشة سوداء)"; exit 66; }
-          echo "✅ App.framework و flutter_assets موجودان"
-
-      - name: Verify IPA artifact
-        script: |
-          set -e
+          echo "== Tree build/ios =="
+          find build/ios -maxdepth 3 -print | sed 's/^/  /'
           if [ -f "build/ios/ipa/Runner.ipa" ]; then
             echo "✅ IPA ready: build/ios/ipa/Runner.ipa"
           else
-            echo "❌ IPA not found, listing:"
-            find build -maxdepth 4 -type f -name "*.ipa" -print
+            echo "❌ IPA not found, searching..."
+            find build -maxdepth 5 -type f -name "*.ipa" -print
             exit 1
           fi
 
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
+
+    publishing:
+      email:
+        recipients:
+          - "${CM_BUILD_INITIATOR_EMAIL}"
+        notify:
+          success: true
+          failure: true

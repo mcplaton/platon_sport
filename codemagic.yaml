@@ -9,6 +9,7 @@ workflows:
       vars:
         BUILD_NAME: "1.0.0"
         BUILD_NUMBER: "1"
+        FLUTTER_ROOT: "/Users/builder/programs/flutter"
 
     triggering:
       events:
@@ -24,7 +25,6 @@ workflows:
         - ~/.cocoapods
         - $HOME/Library/Caches/CocoaPods
         - ios/Pods
-        - build/flutter_assets
 
     scripts:
       - name: Flutter clean & pub get
@@ -33,11 +33,7 @@ workflows:
           flutter clean
           flutter pub get
 
-      - name: Ensure iOS minimum target
-        script: |
-          /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 15.0" ios/Flutter/AppFrameworkInfo.plist || true
-
-      - name: CocoaPods repo update & install (fresh)
+      - name: CocoaPods repo update & clean install
         script: |
           cd ios
           pod repo update
@@ -45,27 +41,33 @@ workflows:
           pod install --repo-update
           cd ..
 
-      - name: Build iOS (no codesign) — produces .app with flutter_assets
+      - name: Build iOS (no codesign)
         script: |
-          flutter build ios --release --no-codesign --build-name=$BUILD_NAME --build-number=$BUILD_NUMBER
+          # نبني أرشيف Device (يولّد Runner.app مع flutter_assets)
+          flutter build ios --release --no-codesign \
+            --build-name="${BUILD_NAME}" \
+            --build-number="${BUILD_NUMBER}"
 
       - name: Verify Flutter assets exist
         script: |
           APP_DIR="build/ios/iphoneos/Runner.app"
           test -d "$APP_DIR" || { echo "❌ Runner.app غير موجود"; exit 64; }
           test -d "$APP_DIR/Frameworks/App.framework" || { echo "❌ App.framework مفقود"; exit 65; }
-          test -d "$APP_DIR/flutter_assets" || { echo "❌ مجلد flutter_assets مفقود (سبب شاشة سوداء)"; ls -lah "$APP_DIR"; exit 66; }
+          test -d "$APP_DIR/flutter_assets" || { 
+            echo "❌ مجلد flutter_assets مفقود (سبب شاشة سوداء)";
+            ls -la "$APP_DIR";
+            exit 66;
+          }
           echo "✅ App.framework و flutter_assets موجودان"
 
       - name: Package unsigned IPA manually
         script: |
           set -e
-          APP_DIR="build/ios/iphoneos/Runner.app"
-          OUT_DIR="build/ios/ipa"
-          mkdir -p "$OUT_DIR/Payload"
-          cp -R "$APP_DIR" "$OUT_DIR/Payload/Runner.app"
-          (cd "$OUT_DIR" && zip -qry Runner.ipa Payload)
-          echo "✅ IPA: $OUT_DIR/Runner.ipa"
+          OUT="build/ios/ipa"
+          mkdir -p "$OUT/Payload"
+          cp -R "build/ios/iphoneos/Runner.app" "$OUT/Payload/Runner.app"
+          (cd "$OUT" && zip -qry Runner.ipa Payload)
+          echo "✅ IPA: $OUT/Runner.ipa"
 
     artifacts:
       - build/ios/ipa/Runner.ipa

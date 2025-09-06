@@ -30,11 +30,10 @@ workflows:
           flutter pub get
           flutter precache --ios
 
-      - name: Ensure correct Podfile (we already placed it in repo)
+      - name: Ensure Podfile exists
         script: |
           set -e
           test -f ios/Podfile || { echo "❌ ios/Podfile missing"; exit 1; }
-          sed -n '1,120p' ios/Podfile
 
       - name: CocoaPods repo update & install
         script: |
@@ -47,13 +46,11 @@ workflows:
       - name: Build iOS (no codesign)
         script: |
           set -e
-          # يضبط Info.plist ودمج Flutter تلقائيًا
           flutter build ipa --release --no-codesign
 
       - name: Verify IPA
         script: |
           set -e
-          echo "== Listing build/ios/ipa =="
           find build/ios -maxdepth 3 -name "*.ipa" -print
           test -f build/ios/ipa/Runner.ipa || { echo "❌ IPA not found"; exit 1; }
           echo "✅ IPA ready: build/ios/ipa/Runner.ipa"
@@ -61,10 +58,3 @@ workflows:
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
-    publishing:
-      email:
-        recipients:
-          - 
-        notify:
-          success: true
-          failure: true

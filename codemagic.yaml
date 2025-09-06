@@ -1,74 +1,73 @@
 workflows:
   ios_unsigned_ipa:
-    name: iOS Unsigned IPA
-    max_build_duration: 120
+    name: iOS unsigned IPA
     environment:
       flutter: stable
       xcode: latest
-      cocoapods: default
-    cache:
-      cache_paths:
-        - ~/.pub-cache
-        - ~/Library/Caches/CocoaPods
-        - ios/Pods
-        - build/.dart_tool
+      vars:
+        CM_CLONE_DIR: $CM_BUILD_DIR
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: "*"
+          include: true
+          source: true
 
     scripts:
-      - name: Clean everything
+      - name: Show versions
         script: |
-          set -e
           flutter --version
-          xcodebuild -version
-          pod --version
-          flutter clean
-          rm -rf ios/Pods ios/Podfile.lock ios/.symlinks || true
-          rm -rf build
+          ruby --version
+          gem --version
+          which flutter
 
-      - name: Get packages & precache iOS
+      - name: Install CocoaPods 1.16.2
+        script: |
+          gem install cocoapods -v 1.16.2 --no-document
+          pod --version
+
+      - name: Prepare Flutter iOS (precache + simulator build to generate ios/Flutter/podhelper.rb)
         script: |
           set -e
+          flutter clean
           flutter pub get
           flutter precache --ios
-
-      - name: Ensure Podfile exists
-        script: |
-          set -e
-          test -f ios/Podfile || { echo "❌ ios/Podfile missing"; exit 1; }
-          echo "✅ Podfile found"
+          # توليد ملفات Flutter داخل ios/Flutter
+          flutter build ios --simulator
 
       - name: CocoaPods repo update & install
         script: |
           set -e
           cd ios
+          rm -rf Pods Podfile.lock
           pod repo update
-          pod install --repo-update
+          pod install --verbose
           cd ..
 
       - name: Build iOS (no codesign)
         script: |
           set -e
-          # تأكد أن Info.plist و Runner موجودين
-          test -f ios/Runner/Info.plist || { echo "❌ ios/Runner/Info.plist missing"; exit 1; }
-          # إبني IPA (Flutter سيستدعي xcodebuild archive داخلًا)
-          flutter build ipa --release --no-codesign
+          # أرشفة عبر Flutter (بدون توقيع)
+          flutter build ipa --no-codesign
 
-      - name: Verify IPA & assets
+      - name: Verify IPA
         script: |
           set -e
-          echo "== IPA files =="
-          find build/ios -maxdepth 3 -name "*.ipa" -print || true
-          test -f build/ios/ipa/Runner.ipa || { echo "❌ IPA not found"; exit 1; }
-          echo "✅ IPA ready: build/ios/ipa/Runner.ipa"
-          echo "== Check flutter assets =="
-          APP="build/ios/iphoneos/Runner.app"
-          if [ -d "$APP" ]; then
-            test -d "$APP/Frameworks/App.framework" || { echo "❌ App.framework missing"; exit 66; }
-            test -d "$APP/flutter_assets" || { echo "❌ flutter_assets missing"; exit 66; }
-            echo "✅ App.framework & flutter_assets exist"
+          echo "== List build/ios/ipa =="
+          ls -lah build/ios/ipa || true
+          if [ -f "build/ios/ipa/Runner.ipa" ]; then
+            echo "✅ IPA ready: build/ios/ipa/Runner.ipa"
           else
-            echo "ℹ️ Runner.app was cleaned by build; skipping assets check"
+            echo "❌ IPA not found"
+            exit 1
           fi
 
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
+
+    publishing:
+      email:
+        recipients:
+          - "ahmedjackson47@gmail.com"

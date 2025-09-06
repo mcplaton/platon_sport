@@ -1,11 +1,17 @@
 workflows:
   ios_unsigned_ipa:
     name: iOS unsigned IPA
+    max_build_duration: 60
     environment:
       flutter: stable
-      xcode: latest
+      xcode: 15.4
+      cocoapods: 1.16.2
       vars:
-        CM_CLONE_DIR: $CM_BUILD_DIR
+        BUILD_NAME: "1.0.0"
+        BUILD_NUMBER: "1"
+      ios_signing:
+        # لا توقيع
+        distribution_type: ad-hoc
     triggering:
       events:
         - push
@@ -14,60 +20,63 @@ workflows:
           include: true
           source: true
 
+    cache:
+      cache_paths:
+        - ~/.pub-cache
+        - ~/.cocoapods
+        - $HOME/Library/Caches/CocoaPods
+        - ios/Pods
+        - build/flutter_assets
+
     scripts:
-      - name: Show versions
+      - name: Flutter clean & pub get
         script: |
           flutter --version
-          ruby --version
-          gem --version
-          which flutter
-
-      - name: Install CocoaPods 1.16.2
-        script: |
-          gem install cocoapods -v 1.16.2 --no-document
-          pod --version
-
-      - name: Prepare Flutter iOS (precache + simulator build to generate ios/Flutter/podhelper.rb)
-        script: |
-          set -e
           flutter clean
           flutter pub get
-          flutter precache --ios
-          # توليد ملفات Flutter داخل ios/Flutter
-          flutter build ios --simulator
 
-      - name: CocoaPods repo update & install
+      - name: Ensure iOS minimum target in Xcode project
         script: |
-          set -e
+          # تأكيد iOS 15.0 أو أعلى
+          /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 15.0" ios/Flutter/AppFrameworkInfo.plist || true
+
+      - name: CocoaPods repo update & install (fresh)
+        script: |
           cd ios
-          rm -rf Pods Podfile.lock
           pod repo update
-          pod install --verbose
+          rm -rf Pods Podfile.lock
+          pod install --repo-update
           cd ..
 
-      - name: Build iOS (no codesign)
+      - name: Build iOS (no codesign) — produces .app with flutter_assets
         script: |
-          set -e
-          # أرشفة عبر Flutter (بدون توقيع)
-          flutter build ipa --no-codesign
+          flutter build ios --release --no-codesign --build-name=$BUILD_NAME --build-number=$BUILD_NUMBER
 
-      - name: Verify IPA
+      - name: Verify Flutter assets exist
+        script: |
+          APP_DIR="build/ios/iphoneos/Runner.app"
+          test -d "$APP_DIR" || { echo "❌ Runner.app غير موجود"; exit 64; }
+          test -d "$APP_DIR/Frameworks/App.framework" || { echo "❌ App.framework مفقود (سبب شاشة سوداء)"; exit 65; }
+          test -d "$APP_DIR/flutter_assets" || { echo "❌ مجلد flutter_assets مفقود (سبب شاشة سوداء)"; ls -lah "$APP_DIR"; exit 66; }
+          echo "✅ App.framework و flutter_assets موجودان"
+
+      - name: Package unsigned IPA manually
         script: |
           set -e
-          echo "== List build/ios/ipa =="
-          ls -lah build/ios/ipa || true
-          if [ -f "build/ios/ipa/Runner.ipa" ]; then
-            echo "✅ IPA ready: build/ios/ipa/Runner.ipa"
-          else
-            echo "❌ IPA not found"
-            exit 1
-          fi
+          APP_DIR="build/ios/iphoneos/Runner.app"
+          OUT_DIR="build/ios/ipa"
+          mkdir -p "$OUT_DIR/Payload"
+          cp -R "$APP_DIR" "$OUT_DIR/Payload/Runner.app"
+          (cd "$OUT_DIR" && zip -qry Runner.ipa Payload)
+          echo "✅ IPA: $OUT_DIR/Runner.ipa"
 
     artifacts:
-      - build/ios/ipa/*.ipa
-      - build/ios/archive/*.xcarchive
+      - build/ios/ipa/Runner.ipa
 
     publishing:
       email:
         recipients:
           - "ahmedjackson47@gmail.com"
+        notify:
+          success: true
+          failure: true

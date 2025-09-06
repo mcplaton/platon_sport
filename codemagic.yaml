@@ -1,87 +1,40 @@
-# codemagic.yaml
 workflows:
   ios_unsigned_ipa:
     name: iOS unsigned IPA
-    max_build_duration: 60
     environment:
       flutter: stable
-      xcode: 15.4
+      xcode: latest
       cocoapods: default
       vars:
-        BUNDLE_ID: "com.example.platonSport"
-        IOS_MIN_SDK: "15.0"
-    triggering:
-      events:
-        - push
-      branch_patterns:
-        - pattern: "main"
-          include: true
-          source: true
+        BUNDLE_ID: "com.example.platonSport"   # عدّلها لو عندك Bundle Id مختلف
     scripts:
       - name: Flutter clean & pub get
         script: |
-          set -e
           flutter --version
           flutter clean
           flutter pub get
-
-      - name: CocoaPods clean & install (with repo update)
+      - name: Precache iOS artifacts
         script: |
-          set -e
-          cd ios
-          rm -rf Pods Podfile.lock
-          pod repo update
-          pod install --repo-update
-          cd -
-
+          flutter precache --ios
+      # ⚠️ لا نعمل pod install يدوياً. اتركها لـ flutter build
       - name: Build iOS (no codesign)
         script: |
-          set -e
-          # نأكّد نشر الحد الأدنى 15.0
-          /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion ${IOS_MIN_SDK}" ios/Flutter/AppFrameworkInfo.plist || true
+          # يولّد ios/Flutter/Generated.xcconfig (ضروري للـ Podfile أعلاه)
           flutter build ios --release --no-codesign
-
-      - name: Ensure flutter assets exist (prevent black screen)
+      - name: Verify Flutter assets exist
         script: |
-          set -e
           APP_DIR="build/ios/iphoneos/Runner.app"
           test -d "$APP_DIR" || { echo "❌ Runner.app غير موجود"; exit 64; }
-          # في بعض الإصدارات تُوضع الأصول داخل App.framework
-          if [ -d "$APP_DIR/Frameworks/App.framework/flutter_assets" ] && [ ! -d "$APP_DIR/flutter_assets" ]; then
-            mv "$APP_DIR/Frameworks/App.framework/flutter_assets" "$APP_DIR/"
-          fi
-          test -f "$APP_DIR/Frameworks/App.framework/App" || { echo "❌ App.framework/App مفقود"; exit 65; }
-          test -d "$APP_DIR/flutter_assets" || { echo "❌ flutter_assets مفقود (سبب شاشة سوداء)"; exit 66; }
+          test -d "$APP_DIR/Frameworks/App.framework" || { echo "❌ App.framework مفقود"; exit 65; }
+          test -d "$APP_DIR/flutter_assets" || { echo "❌ flutter_assets مفقود"; exit 66; }
           echo "✅ App.framework و flutter_assets موجودان"
-
-      - name: Package unsigned IPA
+      - name: Create unsigned IPA
         script: |
           set -e
-          OUT_DIR="build/ios/ipa"
-          APP_DIR="build/ios/iphoneos/Runner.app"
-          mkdir -p "$OUT_DIR/Payload"
-          cp -R "$APP_DIR" "$OUT_DIR/Payload/Runner.app"
-          (cd "$OUT_DIR" && zip -qry "Runner-unsigned.ipa" Payload)
-          rm -rf "$OUT_DIR/Payload"
-          echo "✅ IPA: $OUT_DIR/Runner-unsigned.ipa"
-
-      - name: Verify artifact
-        script: |
-          set -e
-          if [ -f "build/ios/ipa/Runner-unsigned.ipa" ]; then
-            echo "✅ IPA ready: build/ios/ipa/Runner-unsigned.ipa"
-          else
-            echo "❌ IPA not found, listing:"
-            find build -maxdepth 4 -type f -name "*.ipa" -print
-            exit 1
-          fi
-
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          cd Payload && zip -qry ../Runner.ipa . && cd ..
+          ls -lah Runner.ipa
     artifacts:
-      - build/ios/ipa/Runner-unsigned.ipa
-    publishing:
-      email:
-        recipients:
-          - "you@example.com"
-        notify:
-          success: true
-          failure: true
+      - Runner.ipa

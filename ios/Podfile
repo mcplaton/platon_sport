@@ -1,32 +1,49 @@
-# ملف Podfile مصحح لمشروع Flutter
-# هذا الملف يعالج مشاكل شائعة في البناء
-# ويدعم إصدارات iOS الحديثة (من 15.0 فما فوق)
+# Podfile مصحح خصيصاً لمشاريع Flutter على iOS في بيئات CI/CD مثل Codemagic.
 
-# تعيين إصدار منصة iOS إلى 15.0 لضمان التوافق مع أحدث الميزات
+# تعيين الحد الأدنى لإصدار iOS المطلوب.
 platform :ios, '15.0'
 
-# هذا الجزء يحدد المجلدات التي سيتم البحث فيها عن المكتبات (Pods)
+# هذا الجزء ضروري لإيجاد ملف podhelper.rb في بيئة Codemagic
+# ويمنع أخطاء المسار التي تحدث عند البناء.
+flutter_root = ENV['FLUTTER_ROOT'] || '/Users/builder/programs/flutter'
+raise "FLUTTER_ROOT not set or not found at #{flutter_root}" unless File.exist?(flutter_root)
+load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
+
+# استخدام `static` لمنع مشاكل Header Search Paths، وهي سبب خطأ "Flutter/Flutter.h not found".
+# واستخدام `use_modular_headers!` لدمج مكتبات Swift/Objective-C بسلاسة.
+use_frameworks! :linkage => :static
+use_modular_headers!
+
 target 'Runner' do
-  use_frameworks!
-  # هذا السطر تم تعديله ليكون متوافقاً مع بيئة البناء
-  # لأنه لا يسمح بمسارات المتغيرات
-  require_relative '../.ios/Flutter/podhelper.rb'
-  
-  # هذا الكود هو لحل مشاكل التوقيع (Codesign) الشائعة
-  # التي قد تواجهها المكتبات
-  # لا تقم بحذفه
-  post_install do |installer|
-    installer.pods_project.targets.each do |target|
-      target.build_configurations.each do |config|
-        config.build_settings['ENABLE_BITCODE'] = 'NO'
-        config.build_settings['SWIFT_VERSION'] = '5.0'
-      end
+  # هذا السطر يقوم بتثبيت جميع المكتبات (Pods) التي يحتاجها مشروع Flutter تلقائياً.
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+  # يمكنك إضافة المكتبات يدوياً هنا إن لزم الأمر.
+  # pod 'firebase_core', '~> 10.15'
+
+end
+
+post_install do |installer|
+  # هذا هو الـ hook الصحيح لمشاريع Flutter الحديثة.
+  flutter_post_install(installer) if defined?(flutter_post_install)
+
+  # نضبط Target لكل البودات للتوافق مع iOS 15.0
+  installer.pods_project.targets.each do |t|
+    t.build_configurations.each do |cfg|
+      cfg.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+      # هذه الإعدادات تضمن أن الـ linker يعمل بشكل صحيح
+      cfg.build_settings['OTHER_LDFLAGS'] ||= ['$(inherited)']
+      cfg.build_settings['OTHER_CFLAGS']  ||= ['$(inherited)']
     end
   end
 
-  # هذا الجزء يضيف المكتبات التي يحتاجها تطبيقك.
-  # يمكنك إضافة المكتبات هنا يدوياً إذا لم يتم إضافتها تلقائياً
-  # على سبيل المثال:
-  # pod 'some_library'
-
+  # حل مشكلة GoogleUtilities وبعض المكتبات الأخرى عن طريق تفعيل DEFINES_MODULE.
+  # هذا يحل مشاكل الـ frameworks عند استخدام `static`.
+  %w[GoogleUtilities FirebaseCore FirebaseCoreInternal FirebaseCoreExtension FirebaseFirestore].each do |name|
+    pt = installer.pod_targets.find { |x| x.name == name }
+    next unless pt
+    pt.user_build_configurations.keys.each do |cfg|
+      pt.build_settings(cfg)['DEFINES_MODULE'] = 'YES'
+    end
+  end
 end

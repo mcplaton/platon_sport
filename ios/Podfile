@@ -2,40 +2,45 @@
 platform :ios, '15.0'
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
-# اجلب مسار Flutter SDK (يعمل محلياً وعلى Codemagic)
-flutter_root = ENV['FLUTTER_ROOT']
-if flutter_root.nil? || flutter_root.empty?
-  flutter_bin = `which flutter`.strip
-  flutter_root = File.expand_path('../../..', flutter_bin)
-end
-load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
-
-# ✅ مهم: فعّل modular headers عالمياً كي تسمح لـ GoogleUtilities و FirebaseCoreInternal بتوليد module maps
-use_modular_headers!
-
-# (لا نستخدم use_frameworks! إلا لو اضطررنا. إبقِه مُعطلاً لتجنب أخطاء Flutter/Flutter.h)
-# use_frameworks! :linkage => :static
-
 project 'Runner', {
-  'Debug'   => :debug,
+  'Debug' => :debug,
   'Profile' => :release,
   'Release' => :release,
 }
 
+# يستخرج مسار FLUTTER_ROOT من Generated.xcconfig (ينشئه flutter build تلقائياً)
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "#{generated_xcode_build_settings_path} must exist. Run `flutter build ios` once."
+  end
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
+  end
+  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}."
+end
+
+require File.expand_path('packages/flutter_tools/bin/podhelper', flutter_root)
+
+flutter_ios_podfile_setup
+
 target 'Runner' do
+  # 👈 مهم لحل مشكلة GoogleUtilities/FirebaseCoreInternal مع Swift pods
+  use_modular_headers!
+
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 
 post_install do |installer|
   installer.pods_project.targets.each do |t|
     t.build_configurations.each do |config|
-      # حد أدنى iOS 15 (يغطي 15.8.3 وحتى iOS 18+)
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      # استثناء arm64 للمحاكي
+      # دعم محاكي M1/M2 دون تعارض
       config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
-      # السماح للهيدرز غير المعيارية داخل الموديولات (تفيد بعض البلغنز)
+      # تقليل مشاكل non modular includes
       config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
-      # تقليل أخطاء الربط في بيئات CI
+      # سلوك ربط متوافق مع CI
       config.build_settings['DEAD_CODE_STRIPPING'] = 'YES'
     end
   end

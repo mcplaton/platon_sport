@@ -116,7 +116,7 @@ workflows:
     publishing:
       email:
         recipients:
-          - "${CM_BUILD_INITIATOR_EMAIL}"
+          - ahmedjackson47@gmail.com
         notify:
           success: true
           failure: true

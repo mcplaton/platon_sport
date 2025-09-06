@@ -1,74 +1,27 @@
 platform :ios, '15.0'
-ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+use_frameworks! :linkage => :static
+inhibit_all_warnings!
 
-project 'Runner', {
-  'Debug' => :debug,
-  'Profile' => :release,
-  'Release' => :release,
-}
-
-# اكتشاف FLUTTER_ROOT بشكل آمن
+# ✅ حمّل podhelper.rb مباشرةً من Flutter SDK في Codemagic
 flutter_root = ENV['FLUTTER_ROOT']
 if flutter_root.nil? || flutter_root.empty?
-  begin
-    machine = `flutter --version --machine 2>/dev/null`
-    m = machine.match(/"flutterRoot"\s*:\s*"([^"]+)"/)
-    flutter_root = m[1] unless m.nil?
-  rescue
-    flutter_root = nil
-  end
+  # مسار احتياطي بالاعتماد على مكان flutter binary
+  flutter_bin = `which flutter`.strip
+  # flutter/bin/flutter => ارجع ثلاث مستويات لمجلد الجذر
+  flutter_root = File.expand_path('../../..', flutter_bin)
 end
-if flutter_root.nil? || flutter_root.empty?
-  which_flutter = `which flutter`.strip
-  if !which_flutter.nil? && !which_flutter.empty?
-    bin_dir = File.dirname(which_flutter)
-    maybe_root = File.expand_path('..', bin_dir)
-    candidate = File.join(maybe_root, 'flutter')
-    flutter_root = candidate if File.exist?(candidate)
-  end
-end
-raise 'FLUTTER_ROOT not resolved; cannot load podhelper.rb' if flutter_root.nil? || flutter_root.empty?
 load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
 
-use_frameworks! :linkage => :static
-use_modular_headers!
-
-# 🔒 ثبّت سلسلة Firebase iOS SDK على 10.x (تجنّب 11.x)
-$FirebaseVersion = '10.25.0'
-
-flutter_ios_podfile_setup
-
 target 'Runner' do
-  # Pods الخاصة بفلاتر
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-
-  # 🔒 إجبار Firebase على نسخة 10.25.0 لتفادي Swift 6
-  pod 'Firebase/Core', $FirebaseVersion
-  pod 'FirebaseCore', $FirebaseVersion
-  pod 'FirebaseCoreInternal', $FirebaseVersion
-  pod 'FirebaseFirestore', $FirebaseVersion
-  pod 'FirebaseFirestoreInternal', $FirebaseVersion
-  pod 'GoogleUtilities', '7.13.1'   # متوافق مع سلسلة 10.x
-  pod 'nanopb', '2.30910.0'         # متوافق
-  # ملاحظة: لا تضف أي Firebase 11.x هنا
 end
 
 post_install do |installer|
   installer.pods_project.targets.each do |t|
-    flutter_additional_ios_build_settings(t)
     t.build_configurations.each do |config|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      config.build_settings['SWIFT_VERSION'] = '5.0'
-      config.build_settings['ENABLE_BITCODE'] = 'NO'
-      # تنظيف أي فلاغات Swift 6
-      flags = config.build_settings['OTHER_SWIFT_FLAGS']
-      if flags.is_a?(String)
-        cleaned = flags.split(' ').reject { |f|
-          f.include?('enable-upcoming-feature') || f.include?('enable-experimental-feature') || f.include?('swift-version')
-        }.join(' ')
-        config.build_settings['OTHER_SWIFT_FLAGS'] = cleaned
-      end
-      config.build_settings['SWIFT_ENABLE_EXPERIMENTAL_FEATURES'] = ''
+      # استثناء arm64 للمُحاكي فقط (لا يؤثر على الأجهزة)
+      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
     end
   end
 end

@@ -1,12 +1,13 @@
 workflows:
   ios_unsigned_ipa:
-    name: iOS unsigned IPA (no codesign)
+    name: iOS unsigned IPA (manual pack)
     max_build_duration: 60
     environment:
       flutter: stable
       xcode: 15.4
       vars:
         IOS_MIN_VER: "15.0"
+
     triggering:
       events:
         - push
@@ -23,7 +24,7 @@ workflows:
           rm -rf ios/Pods ios/Podfile.lock
           flutter pub get
 
-      - name: Write Podfile (Firebase 10.x, Swift 5, iOS 15)
+      - name: Write Podfile (iOS 15, Swift 5, no hard pins)
         script: |
           cat > ios/Podfile <<'POD'
           platform :ios, '15.0'
@@ -35,43 +36,26 @@ workflows:
             'Release' => :release,
           }
 
-          # Resolve FLUTTER_ROOT robustly
+          # Resolve FLUTTER_ROOT from flutter --version --machine
           flutter_root = ENV['FLUTTER_ROOT']
           if flutter_root.nil? || flutter_root.empty?
             begin
-              machine = `flutter --version --machine 2>/dev/null`
-              m = machine.match(/"flutterRoot"\s*:\s*"([^"]+)"/)
+              m = `flutter --version --machine 2>/dev/null`.match(/"flutterRoot"\s*:\s*"([^"]+)"/)
               flutter_root = m[1] unless m.nil?
             rescue
-              flutter_root = nil
             end
           end
-          if flutter_root.nil? || flutter_root.empty?
-            which_flutter = `which flutter`.strip
-            if !which_flutter.nil? && !which_flutter.empty?
-              bin_dir = File.dirname(which_flutter)
-              maybe_root = File.expand_path('..', bin_dir)
-              candidate = File.join(maybe_root, 'flutter')
-              flutter_root = candidate if File.exist?(candidate)
-            end
-          end
-          raise 'FLUTTER_ROOT not resolved; cannot load podhelper.rb' if flutter_root.nil? || flutter_root.empty?
+          raise 'FLUTTER_ROOT not resolved' if flutter_root.nil? || flutter_root.empty?
           load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
 
           use_frameworks! :linkage => :static
           use_modular_headers!
 
-          # ✅ ثبت فقط حزم Firebase العلوية، ودع GoogleUtilities & Internals تُحل تلقائياً
-          $FirebaseVersion = '10.25.0'
-
           flutter_ios_podfile_setup
 
           target 'Runner' do
             flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-
-            # Firebase (علوية فقط)
-            pod 'Firebase/Core', $FirebaseVersion
-            pod 'FirebaseFirestore', $FirebaseVersion
+            # Firebase pods تُحل تلقائيًا من إضافات Flutter
           end
 
           post_install do |installer|
@@ -81,7 +65,7 @@ workflows:
                 config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
                 config.build_settings['SWIFT_VERSION'] = '5.0'
                 config.build_settings['ENABLE_BITCODE'] = 'NO'
-                # نظّف أي فلاغات Swift 6 تجي من بيئة البيلدر
+                # نظّف أي فلاغات Swift 6
                 flags = config.build_settings['OTHER_SWIFT_FLAGS']
                 if flags.is_a?(String)
                   cleaned = flags.split(' ').reject { |f|
@@ -98,47 +82,65 @@ workflows:
       - name: Ensure GoogleService-Info.plist exists
         script: |
           if [ ! -f "ios/Runner/GoogleService-Info.plist" ]; then
-            echo "❌ ios/Runner/GoogleService-Info.plist غير موجود. نزّله من Firebase Console (مشروع platon-tv) وضعه هنا."
-            ls -lah ios/Runner || true
+            echo "❌ ضع ios/Runner/GoogleService-Info.plist من Firebase Console (مشروعك) ثم أعد التشغيل."
             exit 1
           fi
 
-      - name: CocoaPods install (with repo update)
+      - name: CocoaPods install (repo update)
         script: |
           cd ios
           pod repo update
           pod install --repo-update --verbose
           cd -
 
-      - name: Build unsigned IPA (no code signing)
+      - name: Build unsigned archive (no code signing)
         script: |
-          # تأكد pubspec عندك يستخدم:
-          # firebase_core: 2.24.2
-          # cloud_firestore: 4.15.9
-          flutter build ipa --release --no-codesign
-          echo "== Search IPA =="
-          find build/ios -maxdepth 3 -type f -name "*.ipa" -print || true
-          echo "== List =="
-          find build/ios -maxdepth 3 -print
+          # نبني أرشيف Xcode بدون توقيع
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -archivePath build/ios/archive/Runner.xcarchive \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGNING_IDENTITY="" \
+            archive
+
+      - name: Package IPA manually
+        script: |
+          set -e
+          APP_PATH="build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "❌ Runner.app غير موجود داخل الأرشيف."
+            find build -maxdepth 5 -print
+            exit 65
+          fi
+
+          mkdir -p build/ios/ipa/Payload
+          rm -rf build/ios/ipa/Payload/*
+          cp -R "$APP_PATH" build/ios/ipa/Payload/Runner.app
+
+          # أضف dSYM إن أردت (اختياري)
+          DSYM_DIR="build/ios/archive/Runner.xcarchive/dSYMs"
+          if [ -d "$DSYM_DIR" ]; then
+            cp -R "$DSYM_DIR" build/ios/ipa/
+          fi
+
+          cd build/ios/ipa
+          /usr/bin/zip -qry Runner.ipa Payload
+          cd - 
 
       - name: Verify artifact
         script: |
+          echo "== IPA contents =="
+          ls -lah build/ios/ipa || true
           if [ -f "build/ios/ipa/Runner.ipa" ]; then
             echo "✅ IPA ready: build/ios/ipa/Runner.ipa"
           else
-            echo "❌ IPA not found, listing:"
-            find build -maxdepth 4 -type f -name "*.ipa" -print
+            echo "❌ IPA not found"
             exit 1
           fi
 
     artifacts:
-      - build/ios/ipa/*.ipa
+      - build/ios/ipa/Runner.ipa
       - build/ios/archive/*.xcarchive
-
-    publishing:
-      email:
-        recipients:
-          - "you@example.com"
-        notify:
-          success: true
-          failure: true

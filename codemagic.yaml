@@ -10,35 +10,8 @@ workflows:
       - name: Flutter clean & pub get
         script: |
           set -e
-          flutter --version
           flutter clean
           flutter pub get
-
-      - name: Overwrite Podfile (load local podhelper, iOS 15)
-        script: |
-          set -e
-          cat > ios/Podfile <<'POD'
-          platform :ios, '15.0'
-          use_frameworks! :linkage => :static
-          inhibit_all_warnings!
-
-          # ✅ استخدم نسخة podhelper.rb الموجودة محلياً داخل ios/Flutter
-          require File.expand_path('Flutter/podhelper.rb', __dir__)
-
-          target 'Runner' do
-            flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-          end
-
-          post_install do |installer|
-            installer.pods_project.targets.each do |t|
-              t.build_configurations.each do |config|
-                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-                # استثناء arm64 لمحاكي iOS فقط (ليس للأجهزة)
-                config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
-              end
-            end
-          end
-          POD
 
       - name: Update CocoaPods repos & install
         script: |
@@ -51,7 +24,6 @@ workflows:
       - name: Build iOS (no codesign)
         script: |
           set -e
-          # يبني نسخة الجهاز بدون توقيع
           flutter build ios --release --no-codesign
 
       - name: Ensure flutter_assets in .app (fix black screen)
@@ -60,7 +32,7 @@ workflows:
           APP_DIR="build/ios/iphoneos/Runner.app"
           test -d "$APP_DIR" || { echo "❌ Runner.app غير موجود"; exit 64; }
 
-          # انقل flutter_assets إلى جذر .app إذا كانت داخل App.framework
+          # انقل flutter_assets من داخل App.framework إن لزم
           if [ -d "$APP_DIR/Frameworks/App.framework/flutter_assets" ] && [ ! -d "$APP_DIR/flutter_assets" ]; then
             mv "$APP_DIR/Frameworks/App.framework/flutter_assets" "$APP_DIR/"
           fi
@@ -70,9 +42,9 @@ workflows:
             cp ios/Runner/GoogleService-Info.plist "$APP_DIR/GoogleService-Info.plist"
           fi
 
-          # تحقق نهائي
+          # تحقق نهائي (منع شاشة سوداء)
           test -f "$APP_DIR/Frameworks/App.framework/App" || { echo "❌ App.framework/App مفقود"; exit 65; }
-          test -d "$APP_DIR/flutter_assets" || { echo "❌ flutter_assets مفقود (سبب شاشة سوداء)"; ls -lah "$APP_DIR"; exit 66; }
+          test -d "$APP_DIR/flutter_assets" || { echo "❌ flutter_assets مفقود (سبب شاشة سوداء)"; exit 66; }
           echo "✅ App.framework و flutter_assets موجودان"
 
       - name: Package unsigned IPA

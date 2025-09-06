@@ -9,13 +9,12 @@ workflows:
     cache:
       cache_paths:
         - ~/.pub-cache
-        - ~/.cocoapods
         - ~/Library/Caches/CocoaPods
         - ios/Pods
         - build/.dart_tool
 
     scripts:
-      - name: Clean & show versions
+      - name: Clean everything
         script: |
           set -e
           flutter --version
@@ -23,6 +22,7 @@ workflows:
           pod --version
           flutter clean
           rm -rf ios/Pods ios/Podfile.lock ios/.symlinks || true
+          rm -rf build
 
       - name: Get packages & precache iOS
         script: |
@@ -34,6 +34,7 @@ workflows:
         script: |
           set -e
           test -f ios/Podfile || { echo "❌ ios/Podfile missing"; exit 1; }
+          echo "✅ Podfile found"
 
       - name: CocoaPods repo update & install
         script: |
@@ -46,14 +47,27 @@ workflows:
       - name: Build iOS (no codesign)
         script: |
           set -e
+          # تأكد أن Info.plist و Runner موجودين
+          test -f ios/Runner/Info.plist || { echo "❌ ios/Runner/Info.plist missing"; exit 1; }
+          # إبني IPA (Flutter سيستدعي xcodebuild archive داخلًا)
           flutter build ipa --release --no-codesign
 
-      - name: Verify IPA
+      - name: Verify IPA & assets
         script: |
           set -e
-          find build/ios -maxdepth 3 -name "*.ipa" -print
+          echo "== IPA files =="
+          find build/ios -maxdepth 3 -name "*.ipa" -print || true
           test -f build/ios/ipa/Runner.ipa || { echo "❌ IPA not found"; exit 1; }
           echo "✅ IPA ready: build/ios/ipa/Runner.ipa"
+          echo "== Check flutter assets =="
+          APP="build/ios/iphoneos/Runner.app"
+          if [ -d "$APP" ]; then
+            test -d "$APP/Frameworks/App.framework" || { echo "❌ App.framework missing"; exit 66; }
+            test -d "$APP/flutter_assets" || { echo "❌ flutter_assets missing"; exit 66; }
+            echo "✅ App.framework & flutter_assets exist"
+          else
+            echo "ℹ️ Runner.app was cleaned by build; skipping assets check"
+          fi
 
     artifacts:
       - build/ios/ipa/*.ipa

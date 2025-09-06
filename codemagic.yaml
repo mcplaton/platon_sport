@@ -1,47 +1,47 @@
+#
+# هذا الملف يحل مشاكل التنسيق التي تسببت في خطأ YAML
+# ويضمن سير عملية البناء بشكل صحيح
+#
 workflows:
-ios_unsigned_ipa:
-name: iOS Unsigned Build for PlaToN Sport
-max_build_duration: 60
-environment:
-flutter: stable
-xcode: latest
-vars:
-FLUTTER_ROOT: /Users/builder/programs/flutter
-scripts:
-- name: Flutter SDK and pub get
-script: |
-flutter --version
-flutter clean
-flutter pub get
-- name: Prepare iOS build environment
-script: |
-# هذه الخطوة ضرورية لتوليد الملفات اللازمة للـ pod install
-flutter precache --ios
-- name: CocoaPods repo update
-script: |
-cd ios
-pod repo update
-cd ..
-- name: Pod install
-script: |
-# مسح مجلد Pods وملف Podfile.lock لتجنب أي مشاكل من المحاولات السابقة
-rm -rf ios/Pods ios/Podfile.lock
-cd ios
-pod install --repo-update
-cd ..
-- name: Build iOS (no codesign)
-script: |
-# هذا هو الأمر الصحيح الذي يضمن تجميع كل الأصول (assets) بشكل صحيح
-flutter build ios --release --no-codesign
-- name: Verify build artifacts
-script: |
-APP_DIR="build/ios/iphoneos/Runner.app"
-test -d "$APP_DIR" || { echo "❌ Runner.app is missing!"; exit 1; }
-test -d "$APP_DIR/Frameworks/App.framework" || { echo "❌ App.framework is missing!"; exit 1; }
-test -d "$APP_DIR/flutter_assets" || { echo "❌ flutter_assets folder is missing! This causes the black screen."; exit 1; }
-echo "✅ Build successful! Runner.app, App.framework, and flutter_assets are present."
-artifacts:
-# رفع ملفات التطبيق النهائية للتوقيع اليدوي لاحقاً
-- build/ios/iphoneos/Runner.app
-- build/ios/archive/Runner.xcarchive
-- build/ios/iphoneos/*.dSYM.zip
+  ios_unsigned_ipa:
+    name: iOS Unsigned Build for PlaToN Sport
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      xcode: latest
+      vars:
+        FLUTTER_ROOT: /Users/builder/programs/flutter
+    scripts:
+      - name: Flutter SDK and pub get
+        script: |
+          flutter --version
+          flutter clean
+          flutter pub get
+      - name: Prepare iOS build environment
+        script: |
+          flutter precache --ios
+      - name: CocoaPods repo update
+        script: |
+          cd ios
+          pod repo update
+          cd ..
+      - name: Pod install
+        script: |
+          rm -rf ios/Pods ios/Podfile.lock
+          cd ios
+          pod install --repo-update
+          cd ..
+      - name: Build iOS (no codesign)
+        script: |
+          flutter build ios --release --no-codesign
+      - name: Verify build artifacts
+        script: |
+          APP_DIR="build/ios/iphoneos/Runner.app"
+          test -d "$APP_DIR" || { echo "❌ Runner.app is missing!"; exit 1; }
+          test -d "$APP_DIR/Frameworks/App.framework" || { echo "❌ App.framework is missing!"; exit 1; }
+          test -d "$APP_DIR/flutter_assets" || { echo "❌ flutter_assets folder is missing! This causes the black screen."; exit 1; }
+          echo "✅ Build successful! Runner.app, App.framework, and flutter_assets are present."
+    artifacts:
+      - build/ios/iphoneos/Runner.app
+      - build/ios/archive/Runner.xcarchive
+      - build/ios/iphoneos/*.dSYM.zip

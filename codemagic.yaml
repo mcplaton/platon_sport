@@ -1,20 +1,12 @@
 workflows:
   ios_unsigned_ipa:
-    name: iOS unsigned IPA (manual pack)
+    name: iOS unsigned IPA (Flutter pack)
     max_build_duration: 60
     environment:
       flutter: stable
       xcode: 15.4
       vars:
         IOS_MIN_VER: "15.0"
-
-    triggering:
-      events:
-        - push
-      branch_patterns:
-        - pattern: "*"
-          include: true
-          source: true
 
     scripts:
       - name: Flutter clean & pub get
@@ -24,38 +16,27 @@ workflows:
           rm -rf ios/Pods ios/Podfile.lock
           flutter pub get
 
-      - name: Write Podfile (iOS 15, Swift 5, no hard pins)
+      - name: Write Podfile (iOS 15 / static frameworks)
         script: |
           cat > ios/Podfile <<'POD'
           platform :ios, '15.0'
           ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+          project 'Runner', { 'Debug' => :debug, 'Profile' => :release, 'Release' => :release }
 
-          project 'Runner', {
-            'Debug' => :debug,
-            'Profile' => :release,
-            'Release' => :release,
-          }
-
-          # Resolve FLUTTER_ROOT from flutter --version --machine
           flutter_root = ENV['FLUTTER_ROOT']
           if flutter_root.nil? || flutter_root.empty?
-            begin
-              m = `flutter --version --machine 2>/dev/null`.match(/"flutterRoot"\s*:\s*"([^"]+)"/)
-              flutter_root = m[1] unless m.nil?
-            rescue
-            end
+            m = `flutter --version --machine 2>/dev/null`.match(/"flutterRoot"\s*:\s*"([^"]+)"/)
+            flutter_root = m[1] unless m.nil?
           end
           raise 'FLUTTER_ROOT not resolved' if flutter_root.nil? || flutter_root.empty?
           load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
 
           use_frameworks! :linkage => :static
           use_modular_headers!
-
           flutter_ios_podfile_setup
 
           target 'Runner' do
             flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-            # Firebase pods تُحل تلقائيًا من إضافات Flutter
           end
 
           post_install do |installer|
@@ -65,7 +46,7 @@ workflows:
                 config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
                 config.build_settings['SWIFT_VERSION'] = '5.0'
                 config.build_settings['ENABLE_BITCODE'] = 'NO'
-                # نظّف أي فلاغات Swift 6
+                # نظّف أي فلاغات سويفت غريبة قد تسبب أخطاء
                 flags = config.build_settings['OTHER_SWIFT_FLAGS']
                 if flags.is_a?(String)
                   cleaned = flags.split(' ').reject { |f|
@@ -73,16 +54,15 @@ workflows:
                   }.join(' ')
                   config.build_settings['OTHER_SWIFT_FLAGS'] = cleaned
                 end
-                config.build_settings['SWIFT_ENABLE_EXPERIMENTAL_FEATURES'] = ''
               end
             end
           end
           POD
 
-      - name: Ensure GoogleService-Info.plist exists
+      - name: Ensure Firebase plist exists
         script: |
           if [ ! -f "ios/Runner/GoogleService-Info.plist" ]; then
-            echo "❌ ضع ios/Runner/GoogleService-Info.plist من Firebase Console (مشروعك) ثم أعد التشغيل."
+            echo "❌ ضع ios/Runner/GoogleService-Info.plist ثم أعد التشغيل."
             exit 1
           fi
 
@@ -90,57 +70,33 @@ workflows:
         script: |
           cd ios
           pod repo update
-          pod install --repo-update --verbose
+          pod install --repo-update
           cd -
 
-      - name: Build unsigned archive (no code signing)
+      - name: Build iOS (Flutter, release, no codesign)
         script: |
-          # نبني أرشيف Xcode بدون توقيع
-          xcodebuild \
-            -workspace ios/Runner.xcworkspace \
-            -scheme Runner \
-            -configuration Release \
-            -archivePath build/ios/archive/Runner.xcarchive \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGNING_IDENTITY="" \
-            archive
+          # Flutter هو اللي يكوّن Runner.app كاملة مع App.framework و flutter_assets
+          flutter build ios --release --no-codesign
 
-      - name: Package IPA manually
+      - name: Verify Flutter assets exist
+        script: |
+          APP_DIR="build/ios/iphoneos/Runner.app"
+          test -d "$APP_DIR" || { echo "❌ Runner.app غير موجود"; exit 64; }
+          test -d "$APP_DIR/Frameworks/App.framework" || { echo "❌ App.framework مفقود (سبب شاشة سوداء)"; exit 65; }
+          test -d "$APP_DIR/flutter_assets" || { echo "❌ مجلد flutter_assets مفقود (سبب شاشة سوداء)"; exit 66; }
+          echo "✅ App.framework و flutter_assets موجودان"
+
+      - name: Package IPA (manual)
         script: |
           set -e
-          APP_PATH="build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app"
-          if [ ! -d "$APP_PATH" ]; then
-            echo "❌ Runner.app غير موجود داخل الأرشيف."
-            find build -maxdepth 5 -print
-            exit 65
-          fi
-
-          mkdir -p build/ios/ipa/Payload
-          rm -rf build/ios/ipa/Payload/*
-          cp -R "$APP_PATH" build/ios/ipa/Payload/Runner.app
-
-          # أضف dSYM إن أردت (اختياري)
-          DSYM_DIR="build/ios/archive/Runner.xcarchive/dSYMs"
-          if [ -d "$DSYM_DIR" ]; then
-            cp -R "$DSYM_DIR" build/ios/ipa/
-          fi
-
-          cd build/ios/ipa
-          /usr/bin/zip -qry Runner.ipa Payload
-          cd - 
-
-      - name: Verify artifact
-        script: |
-          echo "== IPA contents =="
-          ls -lah build/ios/ipa || true
-          if [ -f "build/ios/ipa/Runner.ipa" ]; then
-            echo "✅ IPA ready: build/ios/ipa/Runner.ipa"
-          else
-            echo "❌ IPA not found"
-            exit 1
-          fi
+          APP_DIR="build/ios/iphoneos/Runner.app"
+          PKG_DIR="build/ios/ipa"
+          rm -rf "$PKG_DIR"
+          mkdir -p "$PKG_DIR/Payload"
+          cp -R "$APP_DIR" "$PKG_DIR/Payload/Runner.app"
+          (cd "$PKG_DIR" && /usr/bin/zip -qry Runner.ipa Payload)
+          ls -lah "$PKG_DIR"
 
     artifacts:
       - build/ios/ipa/Runner.ipa
-      - build/ios/archive/*.xcarchive
+      - build/ios/iphoneos/Runner.app

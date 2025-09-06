@@ -8,17 +8,14 @@ project 'Runner', {
   'Release' => :release,
 }
 
-# يستخرج مسار FLUTTER_ROOT من Generated.xcconfig (ينشئه flutter build تلقائياً)
 def flutter_root
-  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
-  unless File.exist?(generated_xcode_build_settings_path)
-    raise "#{generated_xcode_build_settings_path} must exist. Run `flutter build ios` once."
+  generated_xcconfig = File.expand_path(File.join('..','Flutter','Generated.xcconfig'), __FILE__)
+  raise "#{generated_xcconfig} must exist. Run `flutter build ios` once." unless File.exist?(generated_xcconfig)
+  File.foreach(generated_xcconfig) do |line|
+    match = line.match(/FLUTTER_ROOT\=(.*)/)
+    return match[1].strip if match
   end
-  File.foreach(generated_xcode_build_settings_path) do |line|
-    matches = line.match(/FLUTTER_ROOT\=(.*)/)
-    return matches[1].strip if matches
-  end
-  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}."
+  raise "FLUTTER_ROOT not found in #{generated_xcconfig}"
 end
 
 require File.expand_path('packages/flutter_tools/bin/podhelper', flutter_root)
@@ -26,21 +23,16 @@ require File.expand_path('packages/flutter_tools/bin/podhelper', flutter_root)
 flutter_ios_podfile_setup
 
 target 'Runner' do
-  # 👈 مهم لحل مشكلة GoogleUtilities/FirebaseCoreInternal مع Swift pods
-  use_modular_headers!
-
+  # لا تضف use_frameworks! هنا
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 
 post_install do |installer|
-  installer.pods_project.targets.each do |t|
-    t.build_configurations.each do |config|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+    target.build_configurations.each do |config|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      # دعم محاكي M1/M2 دون تعارض
       config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
-      # تقليل مشاكل non modular includes
-      config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
-      # سلوك ربط متوافق مع CI
       config.build_settings['DEAD_CODE_STRIPPING'] = 'YES'
     end
   end

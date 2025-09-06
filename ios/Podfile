@@ -1,48 +1,44 @@
-# ------------------------------------------------------------
-# Podfile for Flutter iOS with Firebase/VLC and iOS 15+
-# ------------------------------------------------------------
-
 platform :ios, '15.0'
 
-# تأكد أن Codemagic يضع هذا المتغيّر
+# عرّف FLUTTER_ROOT بشكل صحيح (Codemagic يضبطه عادةً إلى /Users/builder/programs/flutter)
 flutter_root = ENV['FLUTTER_ROOT'] || '/Users/builder/programs/flutter'
-raise "FLUTTER_ROOT not set" unless File.exist?(flutter_root)
+raise "FLUTTER_ROOT not set or not found at #{flutter_root}" unless File.exist?(flutter_root)
 
 load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
 
-# نحتاج دينامك/ستاتك وفق بعض البودات (VLC/Firebase)
 use_frameworks! :linkage => :static
 use_modular_headers!
 
 target 'Runner' do
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-
-  # إن كان لديك Pods يدوية، أضفها هنا (عادةً لا تحتاج لشيء إضافي مع Flutter)
-  # مثال (ليس مطلوباً غالباً):
-  # pod 'GoogleUtilities', '7.13.3', :modular_headers => true
 end
 
 post_install do |installer|
-  # إعدادات Flutter الإضافية لكل Target
-  installer.pods_project.targets.each do |target|
-    flutter_additional_ios_build_settings(target)
+  # ✅ استخدم واجهة Flutter الحديثة
+  flutter_post_install(installer) if defined?(flutter_post_install)
 
-    # توحيد الحد الأدنى للنظام
+  # ارفع الحد الأدنى للنظام وثبّت إعدادات الربط لكل Targets
+  installer.pods_project.targets.each do |target|
     target.build_configurations.each do |config|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-      # إصلاح "Flutter/Flutter.h not found" أحياناً
       config.build_settings['OTHER_LDFLAGS'] ||= ['$(inherited)']
       config.build_settings['OTHER_CFLAGS']  ||= ['$(inherited)']
     end
   end
 
-  # إصلاح تحذير/خطأ Firebase + GoogleUtilities مع Swift كـ static
-  installer.pod_targets.each do |pod_target|
-    if ['GoogleUtilities', 'FirebaseCore', 'FirebaseCoreInternal', 'FirebaseFirestore', 'FirebaseAppCheckInterop', 'FirebaseCoreExtension'].include?(pod_target.name)
-      pod_target.user_build_configurations.keys.each do |config_name|
-        build_settings = pod_target.build_settings(config_name)
-        build_settings['DEFINES_MODULE'] = 'YES'
-      end
+  # فعّل modules للبودات اللي تحتاجها مع Swift عندما نبني static frameworks
+  %w[
+    GoogleUtilities
+    FirebaseCore
+    FirebaseCoreInternal
+    FirebaseFirestore
+    FirebaseAppCheckInterop
+    FirebaseCoreExtension
+  ].each do |name|
+    pod_target = installer.pod_targets.find { |pt| pt.name == name }
+    next unless pod_target
+    pod_target.user_build_configurations.keys.each do |cfg|
+      pod_target.build_settings(cfg)['DEFINES_MODULE'] = 'YES'
     end
   end
 end

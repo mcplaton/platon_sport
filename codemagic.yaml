@@ -5,22 +5,24 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
-      vars:
-        BUNDLE_ID: "com.example.platonSport"   # عدّلها لو عندك Bundle Id مختلف
     scripts:
-      - name: Flutter clean & pub get
+      - name: Flutter clean & deps
         script: |
           flutter --version
           flutter clean
           flutter pub get
-      - name: Precache iOS artifacts
-        script: |
           flutter precache --ios
-      # ⚠️ لا نعمل pod install يدوياً. اتركها لـ flutter build
+      # تحديث مستودعات CocoaPods فقط (بدون pod install)
+      - name: Update CocoaPods specs
+        script: |
+          cd ios
+          pod repo update
+          cd ..
+      # البناء بدون توقيع — Flutter سيجري pod install بالطريقة الصحيحة ويولد Generated.xcconfig
       - name: Build iOS (no codesign)
         script: |
-          # يولّد ios/Flutter/Generated.xcconfig (ضروري للـ Podfile أعلاه)
           flutter build ios --release --no-codesign
+      # تأكيد وجود الأصول (سبب الشاشة السوداء غالباً نقص flutter_assets)
       - name: Verify Flutter assets exist
         script: |
           APP_DIR="build/ios/iphoneos/Runner.app"
@@ -28,13 +30,14 @@ workflows:
           test -d "$APP_DIR/Frameworks/App.framework" || { echo "❌ App.framework مفقود"; exit 65; }
           test -d "$APP_DIR/flutter_assets" || { echo "❌ flutter_assets مفقود"; exit 66; }
           echo "✅ App.framework و flutter_assets موجودان"
-      - name: Create unsigned IPA
+      # تجميع IPA غير موقّع
+      - name: Make unsigned IPA
         script: |
           set -e
-          rm -rf Payload
+          rm -rf Payload Runner.ipa
           mkdir -p Payload
           cp -R build/ios/iphoneos/Runner.app Payload/
-          cd Payload && zip -qry ../Runner.ipa . && cd ..
+          zip -qry Runner.ipa Payload
           ls -lah Runner.ipa
     artifacts:
       - Runner.ipa

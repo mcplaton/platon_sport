@@ -15,23 +15,20 @@ workflows:
         - ios/Pods
         - ~/Library/Caches/CocoaPods
     scripts:
-      - name: Show tool versions
+      - name: Tool versions
         script: |
           set -e
           flutter --version
           pod --version
           xcodebuild -version
 
-      - name: Prepare Flutter iOS (precache & simulator build to generate ios/Flutter/podhelper.rb)
+      - name: Clean & get packages
         script: |
           set -e
           flutter clean
           flutter pub get
-          # يجهّز أدوات iOS وينسخ ios/Flutter/podhelper.rb
-          flutter precache --ios
-          flutter build ios --no-codesign --simulator
 
-      - name: Write Podfile (iOS 15 + modular headers)
+      - name: Write Podfile (overwrite with our fixed one)
         script: |
           set -e
           cat > ios/Podfile <<'POD'
@@ -46,16 +43,16 @@ workflows:
             'Release' => :release,
           }
 
-          # استخدم نسخة podhelper.rb الموجودة محلياً داخل ios/Flutter (أنشأها Flutter أعلاه)
-          require File.expand_path('Flutter/podhelper.rb', __dir__)
+          flutter_root = ENV['FLUTTER_ROOT']
+          if flutter_root.nil? || flutter_root.empty?
+            flutter_root = `flutter --version --machine 2>/dev/null | grep -o '"engineRevision":"[^"]*"' || true`
+            flutter_root = File.expand_path('..', __dir__) # fallback
+          end
+          load File.join(File.expand_path('..', __dir__), 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
 
           target 'Runner' do
             flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-
-            # تثبيت GoogleUtilities مع modular headers لحل تحذير Swift static
             pod 'GoogleUtilities', '7.13.1', :modular_headers => true
-            # مثال (اختياري) لو أردت Analytics:
-            # pod 'Firebase/Analytics'
           end
 
           post_install do |installer|
@@ -64,6 +61,7 @@ workflows:
                 config.build_settings['ENABLE_BITCODE'] = 'NO'
                 config.build_settings['SWIFT_VERSION'] = '5.0'
                 config.build_settings['BUILD_LIBRARY_FOR_DISTRIBUTION'] = 'YES'
+                config.build_settings['OTHER_LDFLAGS'] = '$(inherited) -framework Flutter'
               end
               if t.name == 'gRPC-C++' || t.name == 'gRPC-Core'
                 t.build_configurations.each do |config|
@@ -85,11 +83,13 @@ workflows:
           echo "== Installed pods =="
           ls -1 Pods | sed 's/^/ - /'
 
-      - name: Build iOS (no codesign)
+      - name: Build iOS IPA (no codesign)
         script: |
           set -e
-          flutter build ipa --no-codesign --build-name=$FLUTTER_BUILD_NAME --build-number=$FLUTTER_BUILD_NUMBER
-          # في العادة سيوجد build/ios/ipa/Runner.ipa مباشرة
+          # ينتج ipa مباشرة في build/ios/ipa/Runner.ipa
+          flutter build ipa --no-codesign \
+            --build-name=$FLUTTER_BUILD_NAME \
+            --build-number=$FLUTTER_BUILD_NUMBER
 
       - name: Verify Flutter assets exist
         script: |
@@ -100,40 +100,7 @@ workflows:
           test -d "$APP/flutter_assets" || { echo "❌ مجلد flutter_assets مفقود (سبب شاشة سوداء)"; exit 66; }
           echo "✅ App.framework و flutter_assets موجودان"
 
-      - name: Export unsigned IPA from archive (fallback)
-        script: |
-          set -e
-          if [ -f "build/ios/ipa/Runner.ipa" ]; then
-            echo "IPA already present at build/ios/ipa/Runner.ipa"
-          else
-            ARCHIVE_PATH="$(find build -type d -name 'Runner.xcarchive' -maxdepth 6 -print | head -n 1 || true)"
-            if [ -n "$ARCHIVE_PATH" ]; then
-              mkdir -p build/ios/ipa
-              cat > /tmp/ExportOptions.plist <<'PLIST'
-              <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-              <plist version="1.0">
-              <dict>
-                <key>compileBitcode</key><false/>
-                <key>destination</key><string>export</string>
-                <key>method</key><string>ad-hoc</string>
-                <key>signingStyle</key><string>manual</string>
-                <key>stripSwiftSymbols</key><false/>
-                <key>thinning</key><string>&lt;none&gt;</string>
-                <key>manageAppVersionAndBuildNumber</key><false/>
-              </dict>
-              </plist>
-              PLIST
-              xcodebuild -exportArchive \
-                -archivePath "$ARCHIVE_PATH" \
-                -exportPath build/ios/ipa \
-                -exportOptionsPlist /tmp/ExportOptions.plist \
-                CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGNING_IDENTITY=""
-            fi
-          fi
-          echo "== IPA files =="
-          find build -maxdepth 4 -type f -name "*.ipa" -print || true
-
-      - name: Verify artifact
+      - name: Verify IPA artifact
         script: |
           set -e
           if [ -f "build/ios/ipa/Runner.ipa" ]; then
@@ -147,11 +114,3 @@ workflows:
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
-
-    publishing:
-      email:
-        recipients:
-          - you@example.com
-        notify:
-          success: true
-          failure: true

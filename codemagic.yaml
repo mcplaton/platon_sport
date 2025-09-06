@@ -1,118 +1,107 @@
 workflows:
-  ios_unsigned_ipa:
-    name: iOS unsigned IPA (Flutter pack)
+  ios_unsigned:
+    name: iOS Unsigned (PlaToN Sport)
     max_build_duration: 60
     environment:
       flutter: stable
-      xcode: 15.4
-      vars:
-        IOS_MIN_VER: "15.0"
+      xcode: latest
+      cocoapods: default
 
     scripts:
       - name: Flutter clean & pub get
         script: |
           flutter --version
           flutter clean
-          rm -rf ios/Pods ios/Podfile.lock
           flutter pub get
 
-      - name: Write Podfile (iOS 15 / static frameworks)
+      - name: Prepare iOS Podfile (iOS 15 + static frameworks)
         script: |
-          cat > ios/Podfile <<'POD'
-          platform :ios, '15.0'
-          ENV['COCOAPODS_DISABLE_STATS'] = 'true'
-          project 'Runner', { 'Debug' => :debug, 'Profile' => :release, 'Release' => :release }
+          set -e
+          cd ios
 
-          flutter_root = ENV['FLUTTER_ROOT']
-          if flutter_root.nil? || flutter_root.empty?
-            m = `flutter --version --machine 2>/dev/null`.match(/"flutterRoot"\s*:\s*"([^"]+)"/)
-            flutter_root = m[1] unless m.nil?
-          end
-          raise 'FLUTTER_ROOT not resolved' if flutter_root.nil? || flutter_root.empty?
-          load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
-
-          use_frameworks! :linkage => :static
-          use_modular_headers!
-          flutter_ios_podfile_setup
-
-          target 'Runner' do
-            flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-          end
-
-          post_install do |installer|
-            installer.pods_project.targets.each do |t|
-              flutter_additional_ios_build_settings(t)
-              t.build_configurations.each do |config|
-                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-                config.build_settings['SWIFT_VERSION'] = '5.0'
-                config.build_settings['ENABLE_BITCODE'] = 'NO'
-                flags = config.build_settings['OTHER_SWIFT_FLAGS']
-                if flags.is_a?(String)
-                  cleaned = flags.split(' ').reject { |f|
-                    f.include?('enable-upcoming-feature') || f.include?('enable-experimental-feature') || f.include?('swift-version')
-                  }.join(' ')
-                  config.build_settings['OTHER_SWIFT_FLAGS'] = cleaned
-                end
-              end
-            end
-          end
-          POD
-
-      - name: Ensure Firebase plist exists
-        script: |
-          if [ ! -f "ios/Runner/GoogleService-Info.plist" ]; then
-            echo "❌ ضع ios/Runner/GoogleService-Info.plist ثم أعد التشغيل."
-            exit 1
+          # 1) اجعل الهدف iOS 15.0
+          if grep -q "^platform :ios" Podfile; then
+            sed -i.bak "s/^platform :ios.*/platform :ios, '15.0'/" Podfile
+          else
+            echo "platform :ios, '15.0'" | cat - Podfile > Podfile.tmp && mv Podfile.tmp Podfile
           fi
 
-      - name: CocoaPods install (repo update)
-        script: |
-          cd ios
-          pod repo update
-          pod install --repo-update
+          # 2) استخدم static frameworks (أفضل مع Flutter/Firebase)
+          if grep -q "^use_frameworks!" Podfile; then
+            sed -i.bak "s/^use_frameworks!.*/use_frameworks! :linkage => :static/" Podfile
+          else
+            printf "\nuse_frameworks! :linkage => :static\n" >> Podfile
+          fi
+
+          # 3) post_install لضبط IPHONEOS_DEPLOYMENT_TARGET داخل كل هدف
+          if ! grep -q "post_install do" Podfile; then
+            cat >> Podfile <<'RUBY'
+
+post_install do |installer|
+  installer.pods_project.targets.each do |t|
+    t.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+    end
+  end
+end
+RUBY
+          fi
           cd -
 
-      - name: Build iOS (Flutter, release, no codesign)
+      - name: Update CocoaPods repos (fix specs like GoogleUtilities)
         script: |
+          set -e
+          cd ios
+          pod repo update
+          cd -
+
+      - name: Build iOS (no codesign)
+        script: |
+          set -e
+          # Flutter سيجري pod install تلقائياً
           flutter build ios --release --no-codesign
 
-      - name: Verify Flutter assets exist (new layout)
-        script: |
-          APP_DIR="build/ios/iphoneos/Runner.app"
-          test -d "$APP_DIR" || { echo "❌ Runner.app غير موجود"; exit 64; }
-
-          APP_FW="$APP_DIR/Frameworks/App.framework"
-          ASSETS_NEW="$APP_FW/flutter_assets"
-          ASSETS_OLD="$APP_DIR/flutter_assets"
-
-          if [ -d "$ASSETS_NEW" ]; then
-            echo "✅ وجدنا flutter_assets داخل App.framework:"
-            ls -lah "$ASSETS_NEW" | head -n 20
-          elif [ -d "$ASSETS_OLD" ]; then
-            echo "✅ وجدنا flutter_assets في جذر Runner.app:"
-            ls -lah "$ASSETS_OLD" | head -n 20
-          else
-            echo "❌ لم نعثر على flutter_assets لا داخل App.framework ولا في جذر Runner.app (سبب شاشة سوداء)"
-            echo "محتويات Runner.app/Frameworks:"
-            ls -lah "$APP_DIR/Frameworks" || true
-            exit 66
-          fi
-
-          # تأكد أيضًا من وجود App.framework
-          test -d "$APP_FW" || { echo "❌ App.framework مفقود"; exit 65; }
-          echo "✅ App.framework موجود"
-
-      - name: Package IPA (manual)
+      - name: Fix flutter_assets path (prevent black screen)
         script: |
           set -e
           APP_DIR="build/ios/iphoneos/Runner.app"
-          PKG_DIR="build/ios/ipa"
-          rm -rf "$PKG_DIR"
-          mkdir -p "$PKG_DIR/Payload"
-          cp -R "$APP_DIR" "$PKG_DIR/Payload/Runner.app"
-          (cd "$PKG_DIR" && /usr/bin/zip -qry Runner.ipa Payload)
-          ls -lah "$PKG_DIR"
+          # انقل flutter_assets إلى مكانه الصحيح
+          if [ -d "$APP_DIR/Frameworks/App.framework/flutter_assets" ]; then
+            echo "📦 Moving flutter_assets into Runner.app/"
+            mv "$APP_DIR/Frameworks/App.framework/flutter_assets" "$APP_DIR/"
+          fi
+          # انسخ GoogleService-Info.plist إن كان موجوداً في المشروع
+          if [ -f "ios/Runner/GoogleService-Info.plist" ] && [ ! -f "$APP_DIR/GoogleService-Info.plist" ]; then
+            cp ios/Runner/GoogleService-Info.plist "$APP_DIR/GoogleService-Info.plist"
+          fi
+
+      - name: Verify Flutter assets exist
+        script: |
+          set -e
+          APP_DIR="build/ios/iphoneos/Runner.app"
+          test -d "$APP_DIR" || { echo "❌ Runner.app غير موجود"; exit 64; }
+          test -f "$APP_DIR/Frameworks/App.framework/App" || { echo "❌ App.framework/App مفقود"; exit 65; }
+          test -d "$APP_DIR/flutter_assets" || { echo "❌ flutter_assets مفقود (سبب شاشة سوداء)"; exit 66; }
+          echo "✅ App.framework و flutter_assets موجودان وفي المكان الصحيح"
+
+      - name: Package unsigned IPA (manual zip)
+        script: |
+          set -e
+          APP_DIR="build/ios/iphoneos/Runner.app"
+          OUT_DIR="build/ios/ipa"
+          mkdir -p "$OUT_DIR/Payload"
+          cp -R "$APP_DIR" "$OUT_DIR/Payload/Runner.app"
+          (cd "$OUT_DIR" && zip -qry "Runner-unsigned.ipa" Payload)
+          rm -rf "$OUT_DIR/Payload"
+
+      - name: Verify artifact
+        script: |
+          set -e
+          echo "== IPA contents =="
+          ls -lah build/ios/ipa
+          test -f "build/ios/ipa/Runner-unsigned.ipa" || { echo "❌ IPA not found"; exit 1; }
+          echo "✅ IPA ready: build/ios/ipa/Runner-unsigned.ipa"
 
     artifacts:
-      - build/ios/ipa/Runner.ipa
-      - build/ios/iphoneos/Runner.app
+      - build/ios/ipa/*.ipa
+      - build/ios/iphoneos/Runner.app/**
